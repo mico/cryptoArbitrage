@@ -1,18 +1,21 @@
 # после нахождения удачной комбинации по price, смотреть по bid/ask, а лучше сразу сравнивать bid/ask в обе стороны!
-
-###################Importing modules####################
 import requests
 import json
 import time
 import os
-########################################################
 
-####################Config Variables####################
 minVol = 1 #Minimum volume (In BTC) an exchange should have to be taken into account by this program
 exchangedToIgnore = ["hitbtc", "indacoin"]
 substitutedNames = {"PINK-btc":"pc-btc"}
 alwaysCoins = ["DOGE"]
-########################################################
+
+# XXX: fix BTM mismatching
+# Pair: BTM
+# Buy at cryptopia for 0.00001318 BTC
+# Volume 1.02112844
+# Sell at poloniex for 0.00007585 BTC
+# Volume 4.0279782499999985
+# Potential gain: 475.493%
 
 def getCoinNames(minVol):
   # from poloniex import Poloniex
@@ -32,7 +35,6 @@ def getCoinNames(minVol):
   coinList += alwaysCoins
   return coinList
 
-################Function gets market list###############
 def getMarketList(pair):
     output = requests.get("https://www.cryptocompare.com/api/data/coinsnapshot/?fsym=" + pair + "&tsym=" + "BTC")
     data = json.loads(output.content.decode("utf-8"))["Data"]
@@ -41,15 +43,13 @@ def getMarketList(pair):
     # output = requests.get("https://api.cryptonator.com/api/full/" + pair)
     # markets = json.loads(output.content.decode("utf-8"))["ticker"]["markets"]
     return None
-########################################################
 
-######Function finds lowest and highest exchanges#######
 def getLowestHighestMarkets(exchangedToIgnore, minVol, markets):
     lowestMarket = {"price": 10000000000, "volume": 0}
     highestMarket = {"price": 0, "volume": 0}
     for market in markets:
         # print("Market: " + str(market["MARKET"]))
-        # print("Market data: " + str(market))
+        print("Market data: " + str(market))
         if market["MARKET"].lower() not in exchangedToIgnore:
             market["price"] = marketPrice = float(market["PRICE"])
             market["volume"] = marketVolume = float(market["VOLUME24HOURTO"])
@@ -61,9 +61,7 @@ def getLowestHighestMarkets(exchangedToIgnore, minVol, markets):
                 if marketPrice > highestMarket["price"]:
                     highestMarket = market
     return {"lowestMarket" : lowestMarket, "highestMarket" : highestMarket}
-########################################################
 
-###############Function calculates stats################
 def calcStats(lowestHighestMarkets, pair):
     lowestMarket = lowestHighestMarkets["lowestMarket"]
     highestMarket = lowestHighestMarkets["highestMarket"]
@@ -92,16 +90,12 @@ def calcStats(lowestHighestMarkets, pair):
         "lowestMarket" : lowestMarket,
         "highestMarket" : highestMarket
     }
-########################################################
 
-#####################Run Functions######################
 def getCoinStats():
     coinStats = []
     coinNames = getCoinNames(minVol)
     import os
     for coin in coinNames:
-        #os.system("clear")
-        #os.system("clear")
         print(str(round(100 / (len(coinNames) / (coinNames.index(coin) + 1)), 1)) + "%")
         print('getting markets for ' + str(coin))
         markets = getMarketList(coin)
@@ -112,10 +106,8 @@ def getCoinStats():
         if arbitrageStats["potentialGainPercent"] > 0:
             coinStats.append(arbitrageStats)
     return coinStats
-########################################################
+
 coinStats = getCoinStats()
-# os.system("clear")
-# os.system("clear")
 for coin in sorted(coinStats, key=lambda k: k['potentialGainPercent']):
     stats = coin
     print("\n")
