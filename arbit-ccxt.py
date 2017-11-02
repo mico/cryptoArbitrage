@@ -119,9 +119,6 @@ for exchange_id, markets in all_markets:
         else:
             coins[market] = [exchange_id]
 
-#print("poloniex XVC disabled? %s" % exchanges['poloniex'].wallet_disabled('XVC'))
-#pdb.set_trace()
-
 new_coins = {}
 
 for pair in coins:
@@ -144,8 +141,6 @@ for market, exchanges_ids in new_coins.items():
 total_requests = len([item for sublist in coins_by_exchange.values() for item in sublist])
 current_request = 1
 
-# TODO: cache it
-
 if config['save_cached_data'] and not config['use_cached_data']:
     all_orders = loop.run_until_complete(asyncio.gather(*[asyncio.ensure_future(get_orders(exchange, markets)) \
         for exchange, markets in coins_by_exchange.items()]))
@@ -164,17 +159,25 @@ for exchange_id, orders in all_orders:
                 if (not pair in high_bid) or high_bid[pair][0] < orderbook['bids'][0][0]:
                     high_bid[pair] = [orderbook['bids'][0][0], exchange_id]
 
+# check if wallet deposit is disabled on exchange
+def check_wallets(pair, wallet_exchanges):
+    exchanges_has_check_wallet = list(filter(lambda x: hasattr(exchanges[x], 'wallet_disabled'), wallet_exchanges))
+    if len(exchanges_has_check_wallet) > 0:
+        for exchange in exchanges_has_check_wallet:
+            for currency in pair.split('/'):
+                if currency == 'BTC': continue
+                if asyncio.get_event_loop().run_until_complete(exchanges[exchange].wallet_disabled(currency)):
+                    return True
+    return False
+
 # считать среднюю цену за указанный обьем в стакане (например все цены на 1btc)
-# TODO: делать split пары и проверять обе, если это не BTC
-# TODO: отформатировать этот код нормально, что бы читался
 for pair in new_coins:
     if pair in high_bid and pair in cheapest_ask:
         spread = high_bid[pair][0] - cheapest_ask[pair][0]
         spread_percent = spread / (cheapest_ask[pair][0] / 100)
-        if spread_percent > 1:
+        if spread_percent > 1 and not check_wallets(pair, [cheapest_ask[pair][1],high_bid[pair][1]]):
             #pdb.set_trace()
-            exchanges_check_wallet = list(filter(lambda x: hasattr(exchanges[x], 'wallet_disabled'), \
-                [cheapest_ask[pair][1], high_bid[pair][1]]))
-            if len(exchanges_check_wallet) == 0 or sum([asyncio.get_event_loop().run_until_complete(exchanges[exchange].wallet_disabled(pair.replace('BTC/', '').replace('/BTC', ''))) for exchange in exchanges_check_wallet]) == 0:
-                print("pair %s spread %.8f (%.3f%%) exchanges: %s/%s" % (pair, spread, spread_percent, cheapest_ask[pair][1], high_bid[pair][1]))
-                print("buy for %.8f at %s, sell for %.8f at %s" % (cheapest_ask[pair][0], cheapest_ask[pair][1], high_bid[pair][0], high_bid[pair][1]))
+            print("pair %s spread %.8f (%.3f%%) exchanges: %s/%s" % (pair, spread, spread_percent,
+                                                                     cheapest_ask[pair][1], high_bid[pair][1]))
+            print("buy for %.8f at %s, sell for %.8f at %s" % (cheapest_ask[pair][0], cheapest_ask[pair][1],
+                                                               high_bid[pair][0], high_bid[pair][1]))
