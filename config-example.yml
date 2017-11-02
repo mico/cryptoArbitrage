@@ -10,3 +10,4 @@ minimum_spread: 1
 # cache data for debugging purpose
 save_cached_data: False
 use_cached_data: False
+check_wallets: False

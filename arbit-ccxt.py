@@ -46,7 +46,7 @@ async def poloniex_wallet_disabled(self, currency):
     currencies = await self.publicGetReturnCurrencies()
     return currencies[currency]['disabled'] == 1
 
-ccxt.poloniex.wallet_disabled = poloniex_wallet_disabled
+if config['check_wallets']: ccxt.poloniex.wallet_disabled = poloniex_wallet_disabled
 
 async def yobit_wallet_disabled(self, currency):
     try:
@@ -57,11 +57,7 @@ async def yobit_wallet_disabled(self, currency):
     else:
         return False
 
-ccxt.yobit.wallet_disabled = yobit_wallet_disabled
-
-# можно одновременно со всех бирж тянуть ордера, будет быстрее в 6 раз
-# вместо 200, 40 запросов
-# если использовать 10 прокси, будет 4 запроса
+if config['check_wallets']: ccxt.yobit.wallet_disabled = yobit_wallet_disabled
 
 for id in exchange_ids:
     exchanges[id] = getattr(ccxt, id)({**{'enableRateLimit': True}, **(config['exchanges'][id] if id in config['exchanges'] else {})})
@@ -109,8 +105,6 @@ if config['use_cached_data']:
 else:
     all_markets = loop.run_until_complete(asyncio.gather(*[asyncio.ensure_future(get_markets(id)) for id in exchange_ids]))
 
-# TODO: cache it
-
 for exchange_id, markets in all_markets:
     if markets == None: continue
     for market in markets:
@@ -152,7 +146,6 @@ else:
 
 for exchange_id, orders in all_orders:
         for pair, orderbook in orders.items():
-            #print("%s: %s" % (exchange_id, orderbook))
             if not (len(orderbook['asks']) == 0 or len(orderbook['bids']) == 0):
                 if (not pair in cheapest_ask) or cheapest_ask[pair][0] > orderbook['asks'][0][0]:
                     cheapest_ask[pair] = [orderbook['asks'][0][0], exchange_id]
@@ -166,18 +159,35 @@ def check_wallets(pair, wallet_exchanges):
         for exchange in exchanges_has_check_wallet:
             for currency in pair.split('/'):
                 if currency == 'BTC': continue
-                if asyncio.get_event_loop().run_until_complete(exchanges[exchange].wallet_disabled(currency)):
-                    return True
+                try:
+                    if asyncio.get_event_loop().run_until_complete(exchanges[exchange].wallet_disabled(currency)):
+                        return True
+                except ccxt.errors.RequestTimeout:
+                    print("%s request timeout" % exchange)
+                    pass
     return False
 
+# TODO: add sort by profit
 # считать среднюю цену за указанный обьем в стакане (например все цены на 1btc)
+arbitrage_stats = []
 for pair in new_coins:
     if pair in high_bid and pair in cheapest_ask:
         spread = high_bid[pair][0] - cheapest_ask[pair][0]
         spread_percent = spread / (cheapest_ask[pair][0] / 100)
         if spread_percent > 1 and not check_wallets(pair, [cheapest_ask[pair][1],high_bid[pair][1]]):
+            arbitrage_stats.append({
+                'pair': pair,
+                'spread': spread,
+                'spread_percent': spread_percent,
+                'lowestAskPrice': cheapest_ask[pair][0],
+                'highestBidPrice': high_bid[pair][0],
+                'lowestAskExchange': cheapest_ask[pair][1],
+                'highestBidExchange': high_bid[pair][1]
+            })
             #pdb.set_trace()
-            print("pair %s spread %.8f (%.3f%%) exchanges: %s/%s" % (pair, spread, spread_percent,
-                                                                     cheapest_ask[pair][1], high_bid[pair][1]))
-            print("buy for %.8f at %s, sell for %.8f at %s" % (cheapest_ask[pair][0], cheapest_ask[pair][1],
-                                                               high_bid[pair][0], high_bid[pair][1]))
+
+for s in sorted(arbitrage_stats, key=lambda k: k['spread_percent']):
+    print("pair %s spread %.8f (%.3f%%) exchanges: %s/%s" % (s['pair'], s['spread'], s['spread_percent'],
+                                                             s['lowestAskExchange'], s['highestBidExchange']))
+    print("buy for %.8f at %s, sell for %.8f at %s" % (s['lowestAskPrice'], s['lowestAskExchange'],
+                                                   s['highestBidPrice'], s['highestBidExchange']))
