@@ -64,7 +64,6 @@ for id in exchange_ids:
 
 async def get_markets(id):
     print("load markets for %s" % id)
-    #exchanges[id] = getattr(ccxt, id)({**{'enableRateLimit': True}, **(config['exchanges'][id] if id in config['exchanges'] else {})})
     try:
         await exchanges[id].load_markets()
     except(ccxt.errors.ExchangeNotAvailable, ccxt.errors.DDoSProtection, ccxt.errors.ExchangeError):
@@ -90,7 +89,8 @@ async def get_orders(id, markets):
         except ccxt.errors.DDoSProtection:
             print("%s for %s rate limit" % (id, market))
         else:
-            print("%s/%s got %s for %s (%s/%s)" % (current_request, total_requests, market, id, current_market, len(markets)))
+            print("%s/%s got %s for %s (%s/%s)" % (current_request, total_requests, market, id,
+                                                   current_market, len(markets)))
             orders[market] = result
         current_request += 1
         current_market += 1
@@ -117,7 +117,7 @@ new_coins = {}
 
 for pair in coins:
     #if pair == 'DASH/BTC': new_coins[pair] = coins[pair]
-    if len(coins[pair]) > 1: new_coins[pair] = coins[pair]
+    if len(coins[pair]) > 1 and (pair.split('/')[1] not in ['USD', 'EUR', 'CNY']): new_coins[pair] = coins[pair]
     #if len(new_coins) > 10: break
 total_pairs = len(new_coins.keys())
 
@@ -145,12 +145,12 @@ else:
     all_orders = cached_data['all_orders']
 
 for exchange_id, orders in all_orders:
-        for pair, orderbook in orders.items():
-            if not (len(orderbook['asks']) == 0 or len(orderbook['bids']) == 0):
-                if (not pair in cheapest_ask) or cheapest_ask[pair][0] > orderbook['asks'][0][0]:
-                    cheapest_ask[pair] = [orderbook['asks'][0][0], exchange_id]
-                if (not pair in high_bid) or high_bid[pair][0] < orderbook['bids'][0][0]:
-                    high_bid[pair] = [orderbook['bids'][0][0], exchange_id]
+    for pair, orderbook in orders.items():
+        if not (len(orderbook['asks']) == 0 or len(orderbook['bids']) == 0):
+            if (not pair in cheapest_ask) or cheapest_ask[pair][0] > orderbook['asks'][0][0]:
+                cheapest_ask[pair] = [orderbook['asks'][0][0], exchange_id, orderbook['asks'][0][1]]
+            if (not pair in high_bid) or high_bid[pair][0] < orderbook['bids'][0][0]:
+                high_bid[pair] = [orderbook['bids'][0][0], exchange_id, orderbook['asks'][0][1]]
 
 # check if wallet deposit is disabled on exchange
 def check_wallets(pair, wallet_exchanges):
@@ -167,7 +167,6 @@ def check_wallets(pair, wallet_exchanges):
                     pass
     return False
 
-# TODO: add sort by profit
 # считать среднюю цену за указанный обьем в стакане (например все цены на 1btc)
 arbitrage_stats = []
 for pair in new_coins:
@@ -182,12 +181,15 @@ for pair in new_coins:
                 'lowestAskPrice': cheapest_ask[pair][0],
                 'highestBidPrice': high_bid[pair][0],
                 'lowestAskExchange': cheapest_ask[pair][1],
-                'highestBidExchange': high_bid[pair][1]
+                'highestBidExchange': high_bid[pair][1],
+                'lowestAskVolume': cheapest_ask[pair][2],
+                'highestBidVolume': high_bid[pair][2],
             })
-            #pdb.set_trace()
 
+# писать обьем и в какой валюте
 for s in sorted(arbitrage_stats, key=lambda k: k['spread_percent']):
     print("pair %s spread %.8f (%.3f%%) exchanges: %s/%s" % (s['pair'], s['spread'], s['spread_percent'],
                                                              s['lowestAskExchange'], s['highestBidExchange']))
-    print("buy for %.8f at %s, sell for %.8f at %s" % (s['lowestAskPrice'], s['lowestAskExchange'],
-                                                   s['highestBidPrice'], s['highestBidExchange']))
+    print("buy for %.8f (vol %s) at %s, sell for %.8f (vol %s) at %s" %
+          (s['lowestAskPrice'], s['lowestAskVolume'], s['lowestAskExchange'], s['highestBidPrice'],
+           s['highestBidVolume'], s['highestBidExchange']))
