@@ -1,0 +1,12 @@
+# exchanges config
+exchanges:
+  yobit:
+    apiKey: xxx
+    secret: xxx
+# minimum volume in btc
+minimal_volume: 0.1
+# spread in percent
+minimum_spread: 1
+# cache data for debugging purpose
+save_cached_data: False
+use_cached_data: False
