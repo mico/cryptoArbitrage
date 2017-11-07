@@ -3,12 +3,15 @@
 import asyncio
 import os
 import sys
-import time
+from time import time
 import yaml
+#from cashier import cache
 
 import ccxt.async as ccxt # noqa: E402
 import pdb
 import pickle
+
+# арбитраж между тайскими биржами
 # lowestAsk, highestBid
 # bid - покупка, ask - продажа (дороже)
 
@@ -41,20 +44,43 @@ current_pair = 0
 
 config = yaml.safe_load(open("config.yml"))
 
+if config['use_cached_data']:
+    file = open('cache.txt', 'rb')
+    try:
+        cached_data = pickle.load(file)
+    except EOFError:
+        cached_data = {}
+
 async def poloniex_wallet_disabled(self, currency):
     # TODO: cache this query
     currencies = await self.publicGetReturnCurrencies()
     return currencies[currency]['disabled'] == 1
 
-if config['check_wallets']: ccxt.poloniex.wallet_disabled = poloniex_wallet_disabled
+#if config['check_wallets']: ccxt.poloniex.wallet_disabled = poloniex_wallet_disabled
 
+def save_wallet_disabled(exchange, currency, value):
+    if config['use_cached_data']:
+        if exchange not in cached_data['wallet_disabled']:
+            cached_data['wallet_disabled'][exchange] = {}
+        cached_data['wallet_disabled'][exchange][currency] = {'timestamp': time(), 'value': value}
+
+# TODO: cache it for 1 hour
 async def yobit_wallet_disabled(self, currency):
+    if config['use_cached_data']:
+        if not 'wallet_disabled' in cached_data:
+            cached_data['wallet_disabled'] = {}
+        if 'yobit' in cached_data['wallet_disabled'] and currency in cached_data['wallet_disabled']['yobit'] \
+            and (cached_data['wallet_disabled']['yobit'][currency]['timestamp'] + \
+                config['query_base_prices']['cache_expire_in']) > time():
+            return cached_data['wallet_disabled']['yobit'][currency]['value']
     try:
         await self.privatePostGetDepositAddress({'coinName': currency})
     except ccxt.errors.ExchangeError as error:
         #print(error)
+        save_wallet_disabled('yobit', currency, True)
         return True
     else:
+        save_wallet_disabled('yobit', currency, False)
         return False
 
 if config['check_wallets']: ccxt.yobit.wallet_disabled = yobit_wallet_disabled
@@ -98,9 +124,7 @@ async def get_orders(id, markets):
 
 loop = asyncio.get_event_loop()
 
-if config['use_cached_data']:
-    file = open('cache.txt', 'rb')
-    cached_data = pickle.load(file)
+if config['use_cached_data'] and 'all_markets' in cached_data:
     all_markets = cached_data['all_markets']
 else:
     all_markets = loop.run_until_complete(asyncio.gather(*[asyncio.ensure_future(get_markets(id)) for id in exchange_ids]))
@@ -135,22 +159,39 @@ for market, exchanges_ids in new_coins.items():
 total_requests = len([item for sublist in coins_by_exchange.values() for item in sublist])
 current_request = 1
 
-if config['save_cached_data'] and not config['use_cached_data']:
+if config['use_cached_data'] and 'all_orders' in cached_data:
+    all_orders = cached_data['all_orders']
+else:
     all_orders = loop.run_until_complete(asyncio.gather(*[asyncio.ensure_future(get_orders(exchange, markets)) \
         for exchange, markets in coins_by_exchange.items()]))
-    file = open('cache.txt', 'wb')
-    pickle.dump({'all_markets': all_markets, 'all_orders': all_orders}, file)
-    file.close()
-else:
-    all_orders = cached_data['all_orders']
+    # file = open('cache.txt', 'wb')
+    # pickle.dump({'all_markets': all_markets, 'all_orders': all_orders}, file)
+    # file.close()
+
+def calculate_price_by_volume(orderbook):
+    prices = []
+    total_volume = 0
+    for order in orderbook:
+        prices.append(order[0])
+        total_volume += order[1]
+        if total_volume >= config['minimal_volume']: break
+    else:
+        print("total volume %s instead of %s needed for %s orders" % (total_volume, config['minimal_volume'], len(prices)))
+
+    return sum(prices)/len(prices)
 
 for exchange_id, orders in all_orders:
     for pair, orderbook in orders.items():
+        # first skip non BTC pairs
+        if pair.split('/')[1] != 'BTC': continue
         if not (len(orderbook['asks']) == 0 or len(orderbook['bids']) == 0):
-            if (not pair in cheapest_ask) or cheapest_ask[pair][0] > orderbook['asks'][0][0]:
-                cheapest_ask[pair] = [orderbook['asks'][0][0], exchange_id, orderbook['asks'][0][1]]
-            if (not pair in high_bid) or high_bid[pair][0] < orderbook['bids'][0][0]:
-                high_bid[pair] = [orderbook['bids'][0][0], exchange_id, orderbook['asks'][0][1]]
+            lowestAsk = calculate_price_by_volume(orderbook['asks'])
+            highestBid = calculate_price_by_volume(orderbook['bids'])
+
+            if (not pair in cheapest_ask) or cheapest_ask[pair][0] > lowestAsk:
+                cheapest_ask[pair] = [lowestAsk, exchange_id]
+            if (not pair in high_bid) or high_bid[pair][0] < highestBid:
+                high_bid[pair] = [highestBid, exchange_id]
 
 # check if wallet deposit is disabled on exchange
 def check_wallets(pair, wallet_exchanges):
@@ -160,11 +201,14 @@ def check_wallets(pair, wallet_exchanges):
             for currency in pair.split('/'):
                 if currency == 'BTC': continue
                 try:
+                    print("checking wallet %s at %s" % (currency, exchange))
                     if asyncio.get_event_loop().run_until_complete(exchanges[exchange].wallet_disabled(currency)):
+                        print("true")
                         return True
                 except ccxt.errors.RequestTimeout:
                     print("%s request timeout" % exchange)
                     pass
+                print("false")
     return False
 
 # считать среднюю цену за указанный обьем в стакане (например все цены на 1btc)
@@ -182,14 +226,17 @@ for pair in new_coins:
                 'highestBidPrice': high_bid[pair][0],
                 'lowestAskExchange': cheapest_ask[pair][1],
                 'highestBidExchange': high_bid[pair][1],
-                'lowestAskVolume': cheapest_ask[pair][2],
-                'highestBidVolume': high_bid[pair][2],
             })
+
+# XXX: temporary save all caches
+file = open('cache.txt', 'wb')
+pickle.dump({'all_markets': all_markets, 'all_orders': all_orders, 'wallet_disabled': cached_data['wallet_disabled']}, file)
+file.close()
 
 # писать обьем и в какой валюте
 for s in sorted(arbitrage_stats, key=lambda k: k['spread_percent']):
     print("pair %s spread %.8f (%.3f%%) exchanges: %s/%s" % (s['pair'], s['spread'], s['spread_percent'],
                                                              s['lowestAskExchange'], s['highestBidExchange']))
-    print("buy for %.8f (vol %s) at %s, sell for %.8f (vol %s) at %s" %
-          (s['lowestAskPrice'], s['lowestAskVolume'], s['lowestAskExchange'], s['highestBidPrice'],
-           s['highestBidVolume'], s['highestBidExchange']))
+    print("buy for %.8f at %s, sell for %.8f at %s" %
+          (s['lowestAskPrice'], s['lowestAskExchange'], s['highestBidPrice'],
+           s['highestBidExchange']))
