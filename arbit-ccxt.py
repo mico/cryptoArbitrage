@@ -10,6 +10,7 @@ import yaml
 import ccxt.async as ccxt # noqa: E402
 import pdb
 import pickle
+import aiohttp.client_exceptions
 
 # арбитраж между тайскими биржами
 # lowestAsk, highestBid
@@ -94,6 +95,7 @@ hitbtc2_currencies = None
 
 async def hitbtc2_wallet_disabled(self, currency):
     # TODO: cache this query
+    global hitbtc2_currencies
     if hitbtc2_currencies == None: hitbtc2_currencies = await self.publicGetCurrency()
     for row in hitbtc2_currencies:
         if currency == row['id']:
@@ -105,18 +107,27 @@ if config['check_wallets']: ccxt.hitbtc2.wallet_disabled = hitbtc2_wallet_disabl
 for id in exchange_ids:
     exchanges[id] = getattr(ccxt, id)({**{'enableRateLimit': True}, **(config['exchanges'][id] if id in config['exchanges'] else {})})
 
+markets_error = 0
+markets_success = 0
+
 async def get_markets(id):
+    global markets_error, markets_success
     print("load markets for %s" % id)
     try:
         await exchanges[id].load_markets()
     except(ccxt.errors.ExchangeNotAvailable, ccxt.errors.DDoSProtection, ccxt.errors.ExchangeError):
         print("exchange %s is not available" % id)
+        markets_error += 1
     except ccxt.errors.RequestTimeout: # retry?
         print("exchange %s timed out" % id)
+        markets_error += 1
+    markets_success += 1
     return [id, exchanges[id].symbols]
 
+orders_error = orders_success = 0
+
 async def get_orders(id, markets):
-    global current_request
+    global current_request, orders_error, orders_success
     current_market = 1
     print("load orders for %s" % id)
     orders = {}
@@ -125,18 +136,24 @@ async def get_orders(id, markets):
             result = await exchanges[id].fetch_order_book(market)
         except ccxt.errors.RequestTimeout:
             print("%s for %s timeout" % (id, market))
+            orders_error += 1
         except TypeError:
             print("%s for %s type error" % (id, market))
+            orders_error += 1
         except ccxt.errors.ExchangeError:
             print("%s for %s exchange error" % (id, market))
+            orders_error += 1
         except ccxt.errors.DDoSProtection:
             print("%s for %s rate limit" % (id, market))
+            orders_error += 1
         except aiohttp.client_exceptions.ClientOSError:
             print("%s for %s connection reset" % (id, market))
+            orders_error += 1
         else:
             print("%s/%s got %s for %s (%s/%s)" % (current_request, total_requests, market, id,
                                                    current_market, len(markets)))
             orders[market] = result
+            orders_success += 1
         current_request += 1
         current_market += 1
     return [id, orders]
@@ -227,6 +244,15 @@ def check_wallets(pair, wallet_exchanges):
                 print("false")
     return False
 
+if config['update_cached_data']:
+    print("markets errors/success: %d/%d" % (markets_error, markets_success))
+    print("orders errors/success: %d/%d" % (orders_error, orders_success))
+
+# XXX: temporary save all caches
+file = open('cache.txt', 'wb')
+pickle.dump({'all_markets': all_markets, 'all_orders': all_orders, 'wallet_disabled': cached_data['wallet_disabled']}, file)
+file.close()
+
 # считать среднюю цену за указанный обьем в стакане (например все цены на 1btc)
 arbitrage_stats = []
 for pair in new_coins:
@@ -243,11 +269,6 @@ for pair in new_coins:
                 'lowestAskExchange': cheapest_ask[pair][1],
                 'highestBidExchange': high_bid[pair][1],
             })
-
-# XXX: temporary save all caches
-file = open('cache.txt', 'wb')
-pickle.dump({'all_markets': all_markets, 'all_orders': all_orders, 'wallet_disabled': cached_data['wallet_disabled']}, file)
-file.close()
 
 # писать обьем и в какой валюте
 for s in sorted(arbitrage_stats, key=lambda k: k['spread_percent']):
