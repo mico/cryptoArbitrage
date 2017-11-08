@@ -34,8 +34,8 @@ import pickle
 #buy for 0.00000987 at poloniex, sell for 0.01750046 at bittrex
 # - указывать торговую операцию с обьемом и доход с учетом обьема (в usd)
 
-exchange_ids = ['poloniex', 'yobit', 'bittrex', 'bitfinex', 'bitstamp', 'cryptopia', 'exmo', 'liqui', 'quoine', 'nova', 'livecoin',\
-                'hitbtc', 'coincheck', 'bleutrade', 'bitmex']
+exchange_ids = ['poloniex', 'bittrex', 'bitfinex', 'bitstamp', 'cryptopia', 'exmo', 'liqui', 'quoine', 'nova', 'livecoin',\
+                'hitbtc2','coincheck', 'bleutrade', 'bitmex']
 exchanges = {}
 coins = {}
 cheapest_ask = {}
@@ -85,6 +85,23 @@ async def yobit_wallet_disabled(self, currency):
 
 if config['check_wallets']: ccxt.yobit.wallet_disabled = yobit_wallet_disabled
 
+# hitbtc проверять фьючерсы это или нет
+# GET /api/2/public/currency/{currency}
+# payinEnabled	Boolean	Is allowed for deposit (false for ICO)
+# crypto	Boolean	Is currency belongs to blockchain (false for ICO and fiat, like EUR)
+
+hitbtc2_currencies = None
+
+async def hitbtc2_wallet_disabled(self, currency):
+    # TODO: cache this query
+    if hitbtc2_currencies == None: hitbtc2_currencies = await self.publicGetCurrency()
+    for row in hitbtc2_currencies:
+        if currency == row['id']:
+            return row['payinEnabled'] == False
+    raise(Exception('currency not found'))
+
+if config['check_wallets']: ccxt.hitbtc2.wallet_disabled = hitbtc2_wallet_disabled
+
 for id in exchange_ids:
     exchanges[id] = getattr(ccxt, id)({**{'enableRateLimit': True}, **(config['exchanges'][id] if id in config['exchanges'] else {})})
 
@@ -114,6 +131,8 @@ async def get_orders(id, markets):
             print("%s for %s exchange error" % (id, market))
         except ccxt.errors.DDoSProtection:
             print("%s for %s rate limit" % (id, market))
+        except aiohttp.client_exceptions.ClientOSError:
+            print("%s for %s connection reset" % (id, market))
         else:
             print("%s/%s got %s for %s (%s/%s)" % (current_request, total_requests, market, id,
                                                    current_market, len(markets)))
@@ -124,7 +143,7 @@ async def get_orders(id, markets):
 
 loop = asyncio.get_event_loop()
 
-if config['use_cached_data'] and 'all_markets' in cached_data:
+if not config['update_cached_data'] and config['use_cached_data'] and 'all_markets' in cached_data:
     all_markets = cached_data['all_markets']
 else:
     all_markets = loop.run_until_complete(asyncio.gather(*[asyncio.ensure_future(get_markets(id)) for id in exchange_ids]))
@@ -159,14 +178,11 @@ for market, exchanges_ids in new_coins.items():
 total_requests = len([item for sublist in coins_by_exchange.values() for item in sublist])
 current_request = 1
 
-if config['use_cached_data'] and 'all_orders' in cached_data:
+if not config['update_cached_data'] and config['use_cached_data'] and 'all_orders' in cached_data:
     all_orders = cached_data['all_orders']
 else:
     all_orders = loop.run_until_complete(asyncio.gather(*[asyncio.ensure_future(get_orders(exchange, markets)) \
         for exchange, markets in coins_by_exchange.items()]))
-    # file = open('cache.txt', 'wb')
-    # pickle.dump({'all_markets': all_markets, 'all_orders': all_orders}, file)
-    # file.close()
 
 def calculate_price_by_volume(orderbook):
     prices = []
