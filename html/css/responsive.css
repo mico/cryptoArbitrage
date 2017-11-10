@@ -1,0 +1,113 @@
+/* DESKTOP ONLY */
+@media only screen and (min-width: 841px) {
+  .form-control, .btn {
+    width:280px;
+  }
+  .filter-by-currency-select {
+    display: none;
+  }
+}
+
+/* IN-BETWEEN DESKTOP AND MOBILE ONLY */
+@media only screen and (min-width: 501px) and (max-width:959px) {
+
+}
+
+/* MOBILE ONLY */
+@media only screen and (max-width: 840px) {
+  .home-chart {
+    display: none;
+  }
+  body,input[type='text'], select, .form-control {
+    font-size:16px;
+  }
+  input[type='text'], select, .form-control {
+    width:100% !important;
+  }
+  h1 {
+    text-align: center;
+  }
+  .form-checks label {
+    padding: 6px;
+  }
+  .logo {
+    margin-top:40px;
+    margin-bottom:30px;
+  }
+  .logo img {
+    max-width:85%;
+  }
+  .logo-coins {
+    margin:0 0 40px;
+    text-align:center;
+  }
+  .logo-coins img {
+    width:260px;
+  }
+  .table-tabs {
+    display: block;
+  }
+  .table-tabs span {
+    border-top:1px solid #ccc;
+    border-right:1px solid #ccc;
+    border-left:1px solid #ccc;
+    color:#ccc;
+    border-radius: 3px 3px 0 0;
+    cursor:pointer;
+    display: block;
+    float:left;
+    font-size: 12px;
+    font-weight: bold;
+    margin-right:3%;
+    padding:12px 8px;
+    text-align: center;
+    width:31.3333333%;
+  }
+  .table-tabs span:last-child {
+    margin-right:0;
+  }
+  .table-tabs .L.active, .table-tabs .C.active {
+    background:#ddffcb;
+    color:#000;
+  }
+  .table-tabs .R.active {
+    background:#ddf2ff;
+    color:#000;
+  }
+  .table-tabs .L {
+  }
+  .table-tabs .R {
+  }
+  .spreads-overview th, .spreads-overview td, .data-updates th, .data-updates td {
+    display:none;
+  }
+  .d-price .mobile.d-price,
+  .d-price2 .mobile.d-price2,
+  .d-bid .mobile.d-bid,
+  th.mobile-d-all,
+  td.mobile-d-all  {
+    display: table-cell;
+  }
+  .filter-by-currency {
+    display: none;
+  }
+  .filter-by-currency-select {
+    margin: 0 0 15px;
+  }
+  .alerts-container {
+    padding: 0 20px 40px;
+  }
+  .alerts-select-pairs span, .alerts-select-pairs span b, .alerts-select span.without-pair {
+    padding:12px 16px;
+  }
+  .alerts-select-pairs span {
+    display: block;
+    width:100%;
+  }
+  .alerts-select-pairs span b {
+    float:right;
+    position:relative;
+    right:-16px;
+    top:-12px;
+  }
+}

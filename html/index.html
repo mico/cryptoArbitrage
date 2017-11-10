@@ -1,0 +1,838 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset='utf-8'>
+    <meta content='IE=edge' http-equiv='X-UA-Compatible'>
+    <meta content='width=device-width, initial-scale=1' name='viewport'>
+
+      <meta name="description" content="Real-time spread alerts and monitoring of the world's cryptocurrency, coin, and token exchanges. We provide real-time price and bid/ask spread alerts. We cover exchanges like Bitfinex, Bitstamp, Bittrex, CEX, Gdax/Coinbase, Kraken and Poloniex. We cover cryptocurrencies like Bitcoin (BTC), Bitcoin Cash (BCH,BCC), Dash, EOS, Ethereum (ETH), IOTA, LiteCoin (LTC), Stellar Lumens, Monero (XMR), Ripple (XRP) and NEO.">
+
+    <meta name="google-site-verification" content="DfKxZbO7B6VEGmj1fuNvw_h-6DhqlGPMj_nYSoMN180" />
+    <title>Token Spread</title>
+
+    <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
+    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32x32.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="favicon-16x16.png">
+    <link rel="manifest" href="manifest.json">
+    <link rel="mask-icon" href="safari-pinned-tab.svg" color="#5bbad5">
+    <meta name="theme-color" content="#ffffff">
+
+    <link href='css/bootstrap.min.css' media='screen' rel='stylesheet' type='text/css'>
+    <link href='css/core.css' media='screen' rel='stylesheet' type='text/css'>
+    <link href='css/fonts.css' media='screen' rel='stylesheet' type='text/css'>
+    <link href='css/responsive.css' media='screen' rel='stylesheet' type='text/css'>
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.11.1/jquery.min.js"></script>
+    <script src="js/app.js"></script>
+    <meta property="og:type" content="website" />
+<meta property="og:url" content="https://www.tokenspread.com/" />
+<meta property="og:title" content="Token Spread" />
+<meta property="og:description" content="Real-time spread alerts and monitoring of the world's cryptocurrency, coin, and token exchanges." />
+<meta property="og:image" content="https://www.tokenspread.com/images/logo-unfurl.png" />
+
+  </head>
+  <body data-active="home">
+    <div class="top-bar">
+  <div class="top-bar-tabs clearfix">
+    <div class="L">
+      <a href="/donate"><span><img src="images/icon-bitcoin.svg" /></span> Donate</a>
+    </div>
+    <div class="R">
+      <a href="/alerts"><i class="material-icons">flash_on</i> Get Alerts</a>
+    </div>
+  </div>
+</div>
+
+    <div class="container">
+      <div class="row">
+        <div class="col-xs-12">
+          <header>
+            <div class="logo">
+              <a href="/">
+                <img src="images/logo.svg" alt="Token Spreads - Bitcoin Analytics" />
+              </a>
+            </div>
+            <div class="logo-coins">
+              <img src="images/coins.svg" alt="Cryptocurrencies" />
+            </div>
+          </header>
+        </div>
+      </div>
+
+
+<div class="row">
+  <div class="col-xs-12">
+    <h1><i class="material-icons">timeline</i> Recent BTC/USD</h1>
+    <div id="lines-btc-usd"></div>
+  </div>
+</div>
+
+<div class="row">
+  <div class="col-xs-12">
+    <h1><i class="material-icons">flash_on</i> Top Spreads</h1>
+  </div>
+</div>
+
+<div class="row home-latest">
+  <div class="col-md-4">
+    <table id="latest-btc">
+      <thead>
+        <tr>
+          <th colspan="2">Latest BTC/USD Price Spreads</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+  <div class="col-md-4">
+    <table id="latest-spread-price">
+      <thead>
+        <tr>
+          <th colspan="2">High Price Spread</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+  <div class="col-md-4">
+    <table id="latest-spread-ba">
+      <thead>
+        <tr>
+          <th colspan="2">High Bid/Ask Spread</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="row">
+  <div class="col-xs-12">
+
+    <h1><i class="material-icons">tune</i> Exchange Spreads</h1>
+    <div class="home-chart">
+      <div id="columnchart_material" style="width:100%; height:200px;"></div>
+    </div>
+    <div class="spreads-overview">
+      <div class="table-tabs tabs-spread-overview clearfix">
+  <span class="L active" data-display="price">Price</span>
+  <span class="C" data-display="price2">Price 2</span>
+  <span class="R" data-display="bid">Bid/Ask</span>
+</div>
+
+    </div>
+
+    <h1><i class="material-icons">local_atm</i> Spreads By Currency</h1>
+    <div class="filter-by-currency-select"></div>
+    <div class="filter-by-currency"></div>
+    <div class="data-updates table-can-filter"></div>
+
+    <h1><i class="material-icons">local_atm</i> Spreads History (24h)</h1>
+    <div class="filter-by-currency-select"></div>
+    <div class="filter-by-currency"></div>
+    <div class="data-history table-can-filter"></div>
+
+  </div>
+</div>
+
+<script src="socket.io/socket.io.js"></script>
+<script type="text/javascript" src="https://www.gstatic.com/charts/loader.js"></script>
+<script>
+  var socket = io("http://localhost:8080/chat");
+
+  var $spreads_overview = $('.spreads-overview')
+  var $data_updates = $('.data-updates')
+
+  socket.on('publicView', function(clientData){
+    checkSession(true,socket.id)
+    if ( clientData == 'loading' ){
+      //$spreads_overview.find('tbody').html('<td colspan="9" class="table-updated-at loading mobile-d-all">Loading</td>')
+      $data_updates.html('<table class="loading"><tbody><tr><td><div class="loading mobile-d-all">Loading</div></td></tr></tbody></table>');
+    } else {
+      console.log('clientData: ',clientData)
+      $('.loading').remove()
+      buildData(true,clientData,$data_updates,$spreads_overview,'append',function(err,updated,spreads,masterPairs){
+        //console.log('++pairData',pairData)
+        //console.log('++spreads',spreads)
+        //console.log('++updated',updated)
+        //console.log('++masterPairs',masterPairs)
+        drawOverviewTable(masterPairs,spreads,updated,$spreads_overview,function(err){
+          // ROW HIGHLIGHT ON CLICK
+          setTimeout(function(){
+            tableTabs()
+          },400)
+          rowHighlight()
+          google.charts.setOnLoadCallback(function(){
+            buildLineData(clientData)
+            buildChartData(clientData)
+            onResize(clientData)
+          })
+        })
+      })
+    }
+  });//END SOCKET
+
+  socket.on('publicStream', function(clientData){
+    clientData.data = clientData.data.slice(0,1)
+    console.log('clientData stream: ',clientData)
+    checkSession(false,socket.id)
+    //console.log('clientData: ',clientData)
+    buildData(true,clientData,$data_updates,$spreads_overview,'prepend',function(err,updated,spreads,masterPairs){
+      drawOverviewTable(masterPairs,spreads,updated,$spreads_overview,function(err){
+        // TABLE TABS
+        setTimeout(function(){
+          tableTabs()
+        },400)
+        rowHighlight()
+        buildLineData(clientData)
+        buildChartData(clientData)
+        onResize(clientData)
+      })
+      removeLastDetailTable()
+    })
+  });//END SOCKET
+
+  function checkSession(firstLoad,id){
+  if ( firstLoad == true ){
+    cookie('socketID',id,{expires:365})
+  } else {
+    if ( cookie('socketID') != id ){
+      cookie('socketID','',{expires:365})
+      console.log('refresh page because socketID != id')
+      //var url = window.location.href
+      //window.location = url
+    }
+  }
+}
+
+  function tableTabs(){
+  $('.tabs-spread-overview span').off()
+  $('.tabs-spread-overview span').click(function(){
+    $(this).parents('.tabs-spread-overview').find('span').removeClass('active')
+    //$('.tabs-spread-overview span').removeClass('active')
+    $(this).addClass('active')
+    $(this).parents('.table-tabs').next('table').removeClass('d-price').removeClass('d-price2').removeClass('d-bid')
+    if ( $(this).attr('data-display') == 'price' ){
+      $(this).parents('.table-tabs').next('table').addClass('d-price')
+    }
+    if ( $(this).attr('data-display') == 'price2' ){
+      $(this).parents('.table-tabs').next('table').addClass('d-price2')
+    }
+    if ( $(this).attr('data-display') == 'bid' ){
+      $(this).parents('.table-tabs').next('table').addClass('d-bid')
+    }
+  })
+}
+
+  function drawOverviewTable(masterPairs,spreads,updated,$spreads_overview,cb){
+  var loopcount = 0
+  $spreads_overview.find('table').remove()
+  masterPairs.forEach(function(pair){
+    //console.log('pair',pair)
+    //console.log(!pair[0].endsWith('usd') , !pair[0].endsWith('eur'))
+
+    var pairKey = pair[0]
+
+    // BUILD OVERVIEW TABLE
+    // CLEAR HTML CAUSES RACE CONDITION, THE CODE IS FASTER THAN THE CLIENT
+    setTimeout(function(){
+      if ( loopcount == 0 ){
+        $spreads_overview.append('<table class="d-price">\
+          <thead>\
+            <tr>\
+            <th>Currency</th>\
+            <th class="mobile-d-all">Pair</th>\
+            <th class="mobile d-price d-price2">Price Spread</th>\
+            <th class="mobile d-price2">Last Low Price</th>\
+            <th class="mobile d-price">Low Exchange</th>\
+            <th class="mobile d-price2">Last High Price</th>\
+            <th class="mobile d-price">High Exchange</th>\
+            <th class="mobile d-bid">Low Bid/Ask Spread</th>\
+            <th class="mobile d-bid">Low B/A Exchange</th>\
+            <th class="mobile d-bid">High Bid/Ask Spread</th>\
+            <th class="mobile d-bid">High B/A Exchange</th>\
+            </tr>\
+          </thead>\
+          <tbody><tr><td colspan="11" class="table-updated-at mobile-d-all">'+updated+'</td></tr>\
+          </tbody>\
+        </table>\
+        ')
+      }
+      if ( spreads.pairs[pairKey].spreadLastPrice ){
+        $spreads_overview.find('tbody').append('<tr class="data">\
+          <td class="data-currency">'+pair[1]+'</td>\
+          <td class="data-pair mobile-d-all">'+pairKey+'</td>\
+          <td class="spread-overview-spread-price mobile d-price d-price2">'+spreads.pairs[pairKey].spreadLastPrice+'%</td>\
+          <td class="mobile d-price2">'+spreads.pairs[pairKey].spreadLastPriceMinExchange[0]+'</td>\
+          <td class="data-exchange mobile d-price">'+spreads.pairs[pairKey].spreadLastPriceMinExchange[1]+'</td>\
+          <td class="mobile d-price2">'+spreads.pairs[pairKey].spreadLastPriceMaxExchange[0]+'</td>\
+          <td class="data-exchange mobile d-price">'+spreads.pairs[pairKey].spreadLastPriceMaxExchange[1]+'</td>\
+          <td class="spread-overview-ba mobile d-bid">'+spreads.pairs[pairKey].spreadBidAskMin[0]+'%</td>\
+          <td class="data-exchange mobile d-bid">'+spreads.pairs[pairKey].spreadBidAskMin[1]+'</td>\
+          <td class="spread-overview-ba mobile d-bid">'+spreads.pairs[pairKey].spreadBidAskMax[0]+'%</td>\
+          <td class="data-exchange mobile d-bid">'+spreads.pairs[pairKey].spreadBidAskMax[1]+'</td>\
+        </tr>')
+      }
+      loopcount = loopcount + 1
+      updatedFlash($spreads_overview)
+    },40)
+  })
+  // ROUND FLOATS
+  /*
+  setTimeout(function(){
+    var $spreadCells = $('.spreads-overview').find('td')
+    $spreadCells.each(function(){
+      var rounded = roundFloat( $(this) )
+      $(this).text(rounded)
+    })
+  },40)*/
+  cb(false)
+}
+
+  function drawDetailTables(masterPairs,pairData,spreads,timestamp,updated,$data_updates,insertOrder,cb){
+
+  if ( insertOrder == 'prepend' ){
+    $data_updates.prepend('<div class="data-updates-set '+timestamp+'"></div>')
+  } else {
+    $data_updates.append('<div class="data-updates-set '+timestamp+'"></div>')
+  }
+  $data_updates_set = $('.data-updates-set.'+timestamp)
+  var remaining = pairData.length
+  masterPairs.forEach(function(mp){
+    var pairName = mp[0]
+    var pairSets = pairData[pairName]
+    //console.log('pairName',pairName)
+    //console.log('pairSets',pairSets)
+    if ( pairSets != undefined ){
+      // IF DATA DOES NOT EXIST FOR PAIR, DO NOT PRINT TABLE
+      var tableHead = '<div class="table-tabs tabs-spread-overview clearfix">\
+        <span class="L active" data-display="price">Price</span>\
+        <span class="C" data-display="price2">Price 2</span>\
+        <span class="R" data-display="bid">Bid/Ask</span>\
+        </div>\
+        <table class="'+timestamp+' '+pairName+' d-price">\
+        <thead>\
+        <tr>\
+        <th>Currency</th>\
+        <th class="mobile-d-all">Pair</th>\
+        <th class="mobile-d-all">Exchange</th>\
+        <th class="mobile d-price">Last Price</th>\
+        <th class="mobile d-bid">Bid</th>\
+        <th class="mobile d-bid">Ask</th>\
+        <th>Bid/Ask Spread</th>\
+        <th class="mobile d-price">Last Volume</th>\
+        <th class="mobile d-price2">Volume 24</th>\
+        </tr>\
+        </thead><tbody><tr><td colspan="9" class="table-updated-at mobile-d-all">'+updated+'</td></tr></tbody></table>'
+      $data_updates_set.append(tableHead)
+
+      var $last_table = $data_updates_set.find('table.'+timestamp+'.'+pairName)
+
+      //$('#latest-btc').find('tbody').html('')
+      var eRemain = pairSets.length
+      var exchangeCount = 0
+      //console.log('eRemain',eRemain)
+      for ( exchange in pairSets ){
+        exchangeCount++
+        //console.log('exchange ',exchange )
+        //console.log('spreads',spreads)
+        //console.log('wrapper[set][timestamp].updated',wrapper[set][timestamp].updated)
+        $last_table.find('tbody').append(
+            '<tr class="data '+pairSets[exchange].exchange+'">\
+            <td class="data-currency">'+mp[1]+'</td>\
+            <td class="data-pair mobile-d-all">'+pairName+'</td>\
+            <td class="data-exchange mobile-d-all">'+pairSets[exchange].exchange+'</td>\
+            <td class="data-last-price mobile d-price">'+pairSets[exchange].lastPrice+'</td>\
+            <td class="data-bid mobile d-bid">'+pairSets[exchange].bid+'</td>\
+            <td class="data-ask mobile d-bid">'+pairSets[exchange].ask+'</td>\
+            <td class="data-bid-ask-spread">'+pairSets[exchange].bidAskSpread+'%</td>\
+            <td class="mobile d-price2">'+pairSets[exchange].lastTradeVolume+'</td>\
+            <td class="mobile d-price">'+pairSets[exchange].volume24+'</td>\
+            </tr>')
+
+        // LAST LOOP FOR THIS PAIR
+        if ( ! --eRemain ){
+          if ( exchangeCount > 1){
+            // PRINT MAX BID/ASK
+            //console.log('pairName', pairName, pair[exchange].exchange, timestamp)
+            //console.log(spreads.pairs[pairName])
+            $last_table.find('tbody').append(
+                '<tr class="data-calc">\
+                <td></td>\
+                <td class="mobile-d-all"></td>\
+                <td class="mobile-d-all"></td>\
+                <td class="table-last-price-spread mobile d-price">'+spreads.pairs[pairName].spreadLastPrice+'%</td>\
+                <td class="table-bid-ask-spread mobile d-bid" colspan="2">B/A Max: '+spreads.pairs[pairName].spreadBidAskMax[0]+'%</td>\
+                <td></td>\
+                <td class="mobile d-price2"></td>\
+                <td class="mobile d-price"></td>\
+                </tr>')
+          }
+          // HIGHLIGHT AND PRINT HIGHEST BID/ASK
+          var bidAsksMax = spreads.pairs[pairName].spreadBidAskMax[0]
+          var $rows = $last_table.find('.data')
+          $rows.each(function(){
+            var ba2 = $(this).find('.data-bid-ask-spread').text()
+            if ( ba2.indexOf(bidAsksMax) > -1 ){
+              $(this).find('.data-bid-ask-spread').addClass('data-bas-max').prev().addClass('data-bas-max').prev().addClass('data-bas-max')
+            }
+          })
+          // HIGHLIGHT LOW/HIGH PRICE
+          var $lastPrices = $last_table.find('.data-last-price')
+          var remaining = $lastPrices.length
+          $lastPrices.each(function(lp){
+            if ( lp == 0 ) $(this).addClass('data-price-min');
+            if ( ! --remaining ) $(this).addClass('data-price-max');
+          })
+          // ADD pairName CLASS TO TABLE TABS ABOVE EACH TABLE SO THAT THE CSS CAN HIDE ON CLICK OF EACH TYPE OF TAB, price || bid
+          $last_table.prev().addClass(timestamp+' '+pairName)
+          // ROUND FLOATS
+          /*
+          var $cells = $last_table.find('.data td')
+          $cells.each(function(){
+            var rounded = roundFloat( $(this) )
+            $(this).text(rounded)
+          })*/
+        }
+      }
+      updatedFlash($last_table)
+    }
+  })
+  cb(false)
+}
+function removeLastDetailTable(){
+  setTimeout(function(){
+    // REMOVE LAST TABLE SET
+    //console.log("$('.data-updates-set').length",$('.data-updates-set').length)
+    var setsLength = $('.data-updates-set').length
+    $('.data-updates-set')[setsLength - 1].remove()
+    //console.log('should have removed last detail table')
+    //console.log("$('.data-updates-set').length",$('.data-updates-set').length)
+  },200)
+}
+
+  // BUILD DATA
+function buildData(isPublic,clientData,$data_updates,$spreads_overview,insertOrder,cb){
+  var pairData = {}
+  var spreads = {}
+  var triangles = {}
+  var updated = ''
+  var masterPairs = clientData.masterPairs
+  var exchangeList = clientData.exchangeList
+
+  var timeSets = clientData.data
+  var remaining = timeSets.length
+  timeSets.forEach(function(wrapper){
+    for ( var timestamp in wrapper ){
+      var blobs = wrapper[timestamp]
+      var pairData = blobs.dataByPairPrice
+      var spreads = blobs.spreads
+      var updated = readable(timestamp)
+
+      var triangles = blobs.triangles;
+      if ( isPublic == false ){
+        drawTriangles(triangles,timestamp,updated,insertOrder)
+      }
+      drawDetailTables(masterPairs,pairData,spreads,timestamp,updated,$data_updates,insertOrder,function(err){
+
+      })
+      if ( remaining == timeSets.length ) cb(false,updated,spreads,masterPairs);
+      if ( ! --remaining ){
+        //console.log("$('.alerts-select-pairs').length == 0",$('.alerts-select-pairs').length == 0)
+        //if ( $('.alerts-select-pairs span').length < 2 ) drawAlerts(masterPairs,exchangeList);
+      }
+    }
+  })
+  // THE LINE BELOW ENSURES THIS ONLY PRINTS ON FIRST PAGE LOAD
+  //console.log('insertOrder',insertOrder)
+  if ( insertOrder == 'append' ) buildFilterByCurrency(masterPairs);
+  updateDetailTables()
+  drawLatestTables(clientData,masterPairs)
+}
+function drawLatestTables(clientData,masterPairs){
+  var latestTables = [ $('#latest-btc'), $('#latest-spread-price'), $('#latest-spread-ba') ]
+
+  for ( var timestamp in clientData.data[0] ){
+    var tReadable = readable(timestamp)
+    // LATEST-BTC
+    var priceData = clientData.data[0][timestamp].dataByPairPrice.btc_usd
+    latestTables.forEach(function(t){
+      t.find('tbody').html('')
+    })
+    var remaining = priceData.length
+    var rowCount = 0
+    priceData.forEach(function(row){
+      rowCount++
+      if( rowCount == 1 || rowCount == priceData.length ){
+        $('#latest-btc').find('tbody').append(
+          '<tr>\
+          <td>'+row.exchange+'</td>\
+          <td class="data-price-max">'+row.lastPrice+'</td>')
+      } else {
+        $('#latest-btc').find('tbody').append(
+          '<tr>\
+          <td>'+row.exchange+'</td>\
+          <td>'+row.lastPrice+'</td>')
+      }
+      if ( ! --remaining ){
+        // ADD TIMESTAMPS
+        var rowTimeHtml = '<tr><td colspan="2" class="table-updated-at">'+tReadable+'</td></tr>'
+        latestTables.forEach(function(t){
+          t.find('tbody').prepend(rowTimeHtml)
+        })
+      }
+    })
+    $('#latest-btc').find('tbody').append(
+        '<tr class="data-calc">\
+        <td></td>\
+        <td class="table-last-price-spread mobile d-price">'+clientData.data[0][timestamp].spreads.pairs.btc_usd.spreadLastPrice+'%</td>\
+        </tr>')
+
+    // LATEST BID/ASK MAX
+    var baMaxPairName = ''
+    var baMaxPair = clientData.data[0][timestamp].spreads.minmax.byBidAsk.max.pair
+    var baMaxVal = clientData.data[0][timestamp].spreads.minmax.byBidAsk.max.val
+    var baMaxExchange = clientData.data[0][timestamp].spreads.minmax.byBidAsk.max.exchange
+    masterPairs.forEach(function(p){
+      if ( p[0] == baMaxPair ) baMaxPairName = p[1];
+    })
+    $('#latest-spread-ba').find('tbody').append(
+      '<tr>\
+      <td class="latest-feature data-bas-max">\
+      <span class="latest-val">'+baMaxVal+'%</span>\
+      <span class="latest-pair">'+baMaxPairName+'</span>\
+      <span class="latest-exchange">High Exchange: <strong>'+baMaxExchange+'</strong></span>\
+      </td></tr>')
+
+    // LATEST PRICE MAX
+    var priceMaxPairName = ''
+    var priceMaxPair = clientData.data[0][timestamp].spreads.minmax.byLastPrice.max.pair
+    var priceMaxVal = clientData.data[0][timestamp].spreads.minmax.byLastPrice.max.val
+    var priceMaxExchange = clientData.data[0][timestamp].spreads.minmax.byLastPrice.max.exchangeHigh
+    var priceMinExchange = clientData.data[0][timestamp].spreads.minmax.byLastPrice.max.exchangeLow
+    //console.log('clientData.data[0][0][timestamp].spreads.minmax.byLastPrice.max',clientData.data[0][0][timestamp].spreads.minmax.byLastPrice.max)
+    masterPairs.forEach(function(p){
+      if ( p[0] == priceMaxPair ) priceMaxPairName = p[1];
+    })
+    $('#latest-spread-price').find('tbody').append(
+      '<tr>\
+      <td class="latest-feature data-price-max">\
+      <span class="latest-val">'+priceMaxVal+'%</span>\
+      <span class="latest-pair">'+priceMaxPairName+'</span>\
+      <span class="latest-exchange">Low Exchange: <strong>'+priceMinExchange+'</strong><br />High Exchange: <strong>'+priceMaxExchange+'</strong></span>\
+      </td></tr>')
+
+    // ROUND FLOATS
+    /*
+    var $cells = $('.home-latest').find('td')
+    $cells.each(function(){
+      var rounded = roundFloat( $(this) )
+      $(this).text(rounded)
+    })*/
+
+    // FLASH ON UPDATE
+    latestTables.forEach(function(t){
+      updatedFlash(t)
+    })
+  }
+}
+function readable(t){
+  t = new Date(+t)
+  t = t.toString()
+  //var tz = t.match(/\(([A-Za-z\s].*)\)/)[1]
+  //t = t.split('GMT')[0] + tz
+  return t
+}
+
+  function buildFilterByCurrency(masterPairs){
+  //console.log('** inside buildFilterByCurrency')
+  // CLEAR OUT CONTAINERS TO PREVENT DOUBLE INSERTION ON STALE BROWSER?
+  $('.filter-by-currency-select').html('')
+  $('.filter-by-currency').html('')
+
+  $('.filter-by-currency-select').append('<select class="form-control"><option value="all" selected>All Currency Pairs</options></select>')
+  var remaining = masterPairs.length
+  masterPairs.forEach(function(pair){
+    if ( remaining == masterPairs.length ){
+      $('.filter-by-currency').append('<span class="filter-by-currency-show-all">Show All<b style="display:none">all</b></span>')
+    }
+    $('.filter-by-currency-select').find('select').append('<option value="'+pair[0]+'">'+pair[1]+' &mdash; '+pair[0]+'</option>')
+    $('.filter-by-currency').append('<span>'+pair[1]+' <b>'+pair[0]+'</b></span>')
+    if ( ! --remaining){
+
+    }
+  })
+  filterByCurrencyClicks()
+}
+function filterByCurrencyClicks(){
+  // REMOVE CLICK FUNCTIONS
+  $('.filter-by-currency span').off()
+  // CLICK FUNCTION FOR DESKTOP
+  $('.filter-by-currency span').click(function(){
+    $('.filter-by-currency span').removeClass('active')
+    $(this).addClass('active')
+    var pairKey = $(this).find('b').text()
+    cookie('pair_view',pairKey,{expires:365})
+    filterDetailTables(pairKey)
+    gtag('event','Click',{'event_category':'Action','event_label':'Filter - ' + pairKey})
+    $('.filter-by-currency-show-all').click(function(){
+      cookie('pair_view','',{expires:365})
+      $('.filter-by-currency span').removeClass('active')
+      $(this).addClass('active')
+      $('.data-updates table').fadeIn(200)
+      $('.data-updates .table-tabs').fadeIn(200)
+      gtag('event','Click',{'event_category':'Action','event_label':'Filter - All Currencies'})
+      return false
+    })
+    return false
+  })
+  // CLICK FUNCTION FOR MOBILE
+  $('.filter-by-currency-select').find('select').change(function(){
+    var pairKey = $(this).val()
+    if ( pairKey == 'all' ){
+      cookie('pair_view','',{expires:365})
+      $('.filter-by-currency span').removeClass('active')
+      $('.data-updates table').fadeIn(200)
+      $('.data-updates .table-tabs').fadeIn(200)
+      gtag('event','Click',{'event_category':'Action','event_label':'Filter - All Currencies'})
+    } else {
+      cookie('pair_view',pairKey,{expires:365})
+      filterDetailTables(pairKey)
+      gtag('event','Click',{'event_category':'Action','event_label':'Filter - ' + pairKey})
+    }
+  })
+}
+function updateDetailTables(){
+  //console.log("cookie('pair_view')",cookie('pair_view'))
+  if ( cookie('pair_view') != null && cookie('pair_view') != 'all' ){
+    var pairKey = cookie('pair_view')
+    filterDetailTables(pairKey)
+    $('.filter-by-currency span').each(function(){
+      if ( $(this).find('b').text() == pairKey ){
+        $(this).addClass('active')
+      }
+    })
+  } else {
+    $('.filter-by-currency .filter-by-currency-show-all').addClass('active')
+    filterDetailTables(null)
+  }
+}
+function filterDetailTables(pairKey){
+  $('.data-updates table').hide()
+  $('.data-updates .table-tabs').hide()
+  if ( pairKey == null || pairKey == 'all' ){
+    $('.data-updates .table-tabs').fadeIn(200)
+    $('.data-updates table').fadeIn(200)
+  } else {
+    $('.filter-by-currency-select').find('select').val(pairKey)
+    $('.data-updates .table-tabs.'+pairKey).fadeIn(200)
+    $('.data-updates table.'+pairKey).fadeIn(200)
+  }
+}
+
+  function roundFloat(el){
+  var v = el.text()
+  if ( !isNaN(+v) && v != '' ){
+    v = +v
+    if ( v > 1 ){
+      var vv = v.toFixed(4)
+    } else {
+      var vv = v.toFixed(7)
+    }
+  }
+  return vv
+}
+
+  function updatedFlash(sel){
+  sel.find('.table-updated-at').addClass('updated-flash')
+  setTimeout(function(){
+    sel.find('.table-updated-at').removeClass('updated-flash')
+  },1600)
+}
+
+  function rowHighlight(){
+  setTimeout(function(){
+    $('tr').off()
+    $('tr').click(function(){
+      $(this).toggleClass('data-highlight')
+    })
+  },200)
+}
+
+  google.charts.load('current',{packages:['bar','line']})
+
+function buildLineData(clientData){
+
+  var data = new google.visualization.DataTable();
+  data.addColumn('datetime', 'Time')
+  var btc_usd = clientData.btc_usd
+  // DEFINE EXCHANGE NAMES
+  var exchangeNamesArr = []
+  for ( var t in btc_usd[0] ){
+    btc_usd[0][t].forEach(function(exchange){
+      exchangeNamesArr.push( exchange.exchange )
+    })
+  }
+  // SORT NAMES AND BUILD COLUMNS
+  exchangeNamesArr.sort()
+  exchangeNamesArr.forEach(function(exName){
+    data.addColumn('number', exName)
+  })
+  // BUILD TABLE BY EXCHANGE
+  var btc_usd_data = []
+  btc_usd.forEach(function(set){
+    for ( var t in set ){
+      var timestamp = new Date(+t)
+      var row = [timestamp]
+      exchangeNamesArr.forEach(function(exName){
+        set[t].forEach(function(exchange){
+          if ( exName == exchange.exchange ){
+            var lp = exchange.lastPrice
+            lp = parseFloat(lp)
+            row.push(lp)
+          }
+        })
+      })
+      btc_usd_data.push(row)
+    }
+  })
+  data.addRows(btc_usd_data);
+
+  var options = {
+    chart: {
+      title: '',
+      subtitle: ''
+    },
+    hAxis: {
+      title: ''
+    },
+    legend: {
+      position:'none',
+    },
+    series: {
+      0:{color:'#ba42ff'},
+      1:{color:'#570088'},
+      2:{color:'#e300d1'},
+      3:{color:'#ff4cf0'}
+    },
+    vAxis: {
+      format: '$#,###'
+    },
+    width: $('#lines-btc-usd').width(),
+    height: 170
+  };
+  drawLines(data,options)
+}
+function drawLines(data,options){
+  var chart = new google.charts.Line(document.getElementById('lines-btc-usd'));
+  chart.draw(data, google.charts.Line.convertOptions(options));
+}
+
+  function buildChartData(clientData){
+  var firstSet = clientData.data[0]
+  var spreadPairs = {}
+  for ( var timestamp in firstSet ){
+    spreadPairs = firstSet[timestamp].spreads.pairs
+  }
+  var pairArr = []
+  for ( var pair in spreadPairs ){
+    pairArr.push(pair)
+  }
+  pairArr = pairArr.sort()
+  // CHART DATA - OBJECT TO BE PUSHED INTO
+  var cd = [ ['Pair','Price Spread - Max','B/A Spread - Max'] ]
+  // var cd = [ ['Pair', 'Price Spread %', { role: 'style' }, { role: 'annotation' }] ]
+  pairArr.forEach(function(pairName){
+    if ( spreadPairs[pairName].spreadLastPrice > 0 ){
+      var row = []
+      row.push(pairName,(spreadPairs[pairName].spreadLastPrice/100),(spreadPairs[pairName].spreadBidAskMax[0]/100))
+      cd.push(row)
+    }
+  })
+
+  var data = google.visualization.arrayToDataTable(cd)
+
+  var options = {
+    animation:{
+      duration: 1000,
+      easing: 'inAndOut',
+      startup:true,
+    },
+    bar: { groupWidth:'94%' },
+    colors: ['#1b9e77', '#d95f02', '#7570b3'],
+    hAxis: {
+      format: '#,###%',
+      title: ''
+    },
+    isStacked: true,
+    legend: {
+      position:'none',
+    },
+    series: {
+      0:{color:'#678e52'},
+      1:{color:'#63a2ff'}
+    },
+    title: null,
+    vAxis: {
+      format: '#,###.##%',
+      title: ''
+    },
+  };
+  drawChart(data,options)
+}
+function drawChart(data,options){
+  var chart = new google.charts.Bar(document.getElementById('columnchart_material'))
+  chart.draw(data, google.charts.Bar.convertOptions(options))
+}
+
+  function onResize(clientData){
+  var oR = function(){
+    if ( $(window).innerWidth() > 840 ){
+      $('.data-updates .table-tabs').addClass('hide')
+      buildLineData(clientData)
+      buildChartData(clientData)
+    } else {
+      $('.data-updates .table-tabs').removeClass('hide')
+      // NO RESIZE BECAUSE IT HAPPENS ON TOUCH FOR SOME REASON
+      //buildLineData(clientData)
+    }
+  }
+  $(window).off()
+  oR(clientData)
+  $(window).resize(function(){
+    oR(clientData)
+  })
+}
+
+
+</script>
+
+      <div class="row">
+        <div class="col-xs-12 footer">
+          <section class="footer-links">
+            <a href="/terms-of-use-and-privacy-policy">Terms of Use</a>
+            <a href="/terms-of-use-and-privacy-policy">Privacy Policy</a>
+          </section>
+          <section class="footer-contact">
+            Contact: <strong>admin (at) tokenspread . com</strong>
+          </section>
+          <section class="copyright">
+            &#9400; <span id="copyright"></span> Token Spread
+          </section>
+        </div>
+      </div>
+    </div>
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-10615444-10"></script>
+    <script>
+      var d = new Date()
+      var n = d.getFullYear()
+      $('#copyright').text(n)
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments)};
+      gtag('js', new Date());
+      gtag('config', 'UA-10615444-10');
+    </script>
+  </body>
+</html>
+©

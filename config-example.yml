@@ -11,3 +11,14 @@ minimum_spread: 1
 save_cached_data: False
 use_cached_data: False
 check_wallets: False
+update_cached_data: False
+query_base_prices:
+  # one day
+  cache_expire_in: 86400
+  exchange: poloniex
+influxdb:
+  host: 'localhost'
+  post: 8086
+  user: 'user'
+  password: 'password'
+  database: 'cryptoarbitrage'

@@ -5,7 +5,7 @@ import os
 import sys
 from time import time
 import yaml
-#from cashier import cache
+from influxdb import InfluxDBClient
 
 import ccxt.async as ccxt # noqa: E402
 import pdb
@@ -35,8 +35,9 @@ import aiohttp.client_exceptions
 #buy for 0.00000987 at poloniex, sell for 0.01750046 at bittrex
 # - указывать торговую операцию с обьемом и доход с учетом обьема (в usd)
 
-exchange_ids = ['poloniex', 'bittrex', 'bitfinex', 'bitstamp', 'cryptopia', 'exmo', 'liqui', 'quoine', 'nova', 'livecoin',\
-                'hitbtc2','coincheck', 'bleutrade', 'bitmex']
+# exchange_ids = ['poloniex', 'bittrex', 'bitfinex', 'bitstamp', 'cryptopia', 'exmo', 'liqui', 'quoine', 'nova', 'livecoin',\
+#                 'hitbtc2','coincheck', 'bleutrade', 'bitmex']
+exchange_ids = ['poloniex', 'hitbtc2', 'bittrex', 'exmo', 'liqui']
 exchanges = {}
 coins = {}
 cheapest_ask = {}
@@ -52,12 +53,14 @@ if config['use_cached_data']:
     except EOFError:
         cached_data = {}
 
+poloniex_currencies = None
 async def poloniex_wallet_disabled(self, currency):
+    global poloniex_currencies
     # TODO: cache this query
-    currencies = await self.publicGetReturnCurrencies()
-    return currencies[currency]['disabled'] == 1
+    if poloniex_currencies == None: poloniex_currencies = await self.publicGetReturnCurrencies()
+    return poloniex_currencies[currency]['disabled'] == 1
 
-#if config['check_wallets']: ccxt.poloniex.wallet_disabled = poloniex_wallet_disabled
+if config['check_wallets']: ccxt.poloniex.wallet_disabled = poloniex_wallet_disabled
 
 def save_wallet_disabled(exchange, currency, value):
     if config['use_cached_data']:
@@ -220,11 +223,12 @@ for exchange_id, orders in all_orders:
         if not (len(orderbook['asks']) == 0 or len(orderbook['bids']) == 0):
             lowestAsk = calculate_price_by_volume(orderbook['asks'])
             highestBid = calculate_price_by_volume(orderbook['bids'])
+            BASpread = (orderbook['asks'][0][0] - orderbook['bids'][0][0]) / (orderbook['asks'][0][0] / 100)
 
             if (not pair in cheapest_ask) or cheapest_ask[pair][0] > lowestAsk:
-                cheapest_ask[pair] = [lowestAsk, exchange_id]
+                cheapest_ask[pair] = [lowestAsk, exchange_id, BASpread]
             if (not pair in high_bid) or high_bid[pair][0] < highestBid:
-                high_bid[pair] = [highestBid, exchange_id]
+                high_bid[pair] = [highestBid, exchange_id, BASpread]
 
 # check if wallet deposit is disabled on exchange
 def check_wallets(pair, wallet_exchanges):
@@ -268,12 +272,40 @@ for pair in new_coins:
                 'highestBidPrice': high_bid[pair][0],
                 'lowestAskExchange': cheapest_ask[pair][1],
                 'highestBidExchange': high_bid[pair][1],
+                'lowestBASpread': cheapest_ask[pair][2],
+                'highestBASpread': high_bid[pair][2]
             })
 
 # писать обьем и в какой валюте
+client = InfluxDBClient(config['influxdb']['host'], config['influxdb']['port'], config['influxdb']['user'],
+                        config['influxdb']['password'], config['influxdb']['database'])
+client.query('delete from spreads')
+
 for s in sorted(arbitrage_stats, key=lambda k: k['spread_percent']):
     print("pair %s spread %.8f (%.3f%%) exchanges: %s/%s" % (s['pair'], s['spread'], s['spread_percent'],
                                                              s['lowestAskExchange'], s['highestBidExchange']))
     print("buy for %.8f at %s, sell for %.8f at %s" %
           (s['lowestAskPrice'], s['lowestAskExchange'], s['highestBidPrice'],
            s['highestBidExchange']))
+
+    json_body = [
+        {
+            "measurement": "spreads",
+            "tags": {
+                "pair": s['pair'],
+            },
+            "fields": {
+                "lowestAskExchange": s["lowestAskExchange"],
+                "highestBidExchange": s["highestBidExchange"],
+                "lowestAskPrice": s["lowestAskPrice"],
+                "highestBidPrice": s["highestBidPrice"],
+                "lowestBASpread": s["lowestBASpread"],
+                "highestBASpread": s["highestBASpread"]
+            }
+        }
+    ]
+    client.write_points(json_body)
+
+
+#result = client.query('select value from cpu_load_short;')
+#print("Result: {0}".format(result))
