@@ -1,5 +1,8 @@
 # -*- coding: utf-8 -*-
 
+from aiohttp import web
+import socketio
+
 import asyncio
 import os
 import sys
@@ -40,7 +43,9 @@ import logging
 
 # exchange_ids = ['poloniex', 'bittrex', 'bitfinex', 'bitstamp', 'cryptopia', 'exmo', 'liqui', 'quoine', 'nova', 'livecoin',\
 #                 'hitbtc2','coincheck', 'bleutrade', 'bitmex']
-exchange_ids = ['poloniex', 'hitbtc2', 'bittrex', 'exmo', 'liqui']
+# TODO: fix bitfinex rate limit
+# TODO: add bitshares dex
+exchange_ids = ['poloniex', 'hitbtc2', 'bittrex', 'exmo', 'liqui', 'binance']
 exchanges = {}
 coins = {}
 cheapest_ask = {}
@@ -77,6 +82,10 @@ async def poloniex_wallet_disabled(self, currency):
     return poloniex_currencies[currency]['disabled'] == 1
 
 if config['check_wallets']: ccxt.poloniex.wallet_disabled = poloniex_wallet_disabled
+
+sio = socketio.AsyncServer()
+app = web.Application()
+sio.attach(app)
 
 def debug(message):
     # print(message)
@@ -135,14 +144,14 @@ markets_success = 0
 
 async def get_markets(id):
     global markets_error, markets_success
-    print("load markets for %s" % id)
+    logger.info("load markets for %s" % id)
     try:
         await exchanges[id].load_markets()
     except(ccxt.errors.ExchangeNotAvailable, ccxt.errors.DDoSProtection, ccxt.errors.ExchangeError):
-        print("exchange %s is not available" % id)
+        logger.error("exchange %s is not available" % id)
         markets_error += 1
     except ccxt.errors.RequestTimeout: # retry?
-        print("exchange %s timed out" % id)
+        logger.error("exchange %s timed out" % id)
         markets_error += 1
     markets_success += 1
     return [id, exchanges[id].symbols]
@@ -152,7 +161,7 @@ orders_error = orders_success = 0
 async def get_orders(id, markets):
     global current_request, orders_error, orders_success
     current_market = 1
-    print("load orders for %s" % id)
+    logger.info("load orders for %s" % id)
     orders = {}
     while True:
         for market in markets:
@@ -172,6 +181,9 @@ async def get_orders(id, markets):
                 orders_error += 1
             except aiohttp.client_exceptions.ClientOSError:
                 print("%s for %s connection reset" % (id, market))
+                orders_error += 1
+            except ccxt.errors.ExchangeNotAvailable:
+                print("%s for %s exchange error" % (id, market))
                 orders_error += 1
             else:
                 debug("%s/%s got %s for %s (%s/%s)" % (current_request, total_requests, market, id,
@@ -227,6 +239,150 @@ lowestAskPair = {}
 highestBidPair = {}
 exchangeAsk = {}
 exchangeBid = {}
+spreads_by_pairs = {}
+
+async def send_update(pair):
+    if pair not in arbitrage_stats:
+        # kind of dropping arbitrage
+        spreads_by_pairs[pair] = {
+            'spreadBidAskMin': [0, 0],
+            'spreadBidAskMax': [0, 0],
+            'spreadLastPrice': "",
+            'spreadLastPriceMaxExchange': [0, 0],
+            'spreadLastPriceMinExchange': [0, 0],
+        }
+    else:
+        spreads_by_pairs[pair] = {
+            'spreadBidAskMin': ["%.2f" % arbitrage_stats[pair]['lowestBASpread'], arbitrage_stats[pair]['arbitrage']['lowestAskExchange']],
+            'spreadBidAskMax': ["%.2f" % arbitrage_stats[pair]['highestBASpread'], arbitrage_stats[pair]['arbitrage']['highestBidExchange']],
+            'spreadLastPrice': "%.2f" % float(arbitrage_stats[pair]['arbitrage']['spread_percent']),
+            'spreadLastPriceMaxExchange': ["%.8f" % arbitrage_stats[pair]['arbitrage']['highestBidPrice'], arbitrage_stats[pair]['arbitrage']['highestBidExchange']],
+            'spreadLastPriceMinExchange': ["%.8f" % arbitrage_stats[pair]['arbitrage']['lowestAskPrice'], arbitrage_stats[pair]['arbitrage']['lowestAskExchange']],
+        }
+
+    update_time = int(time())
+
+    logger.info("send update!!!")
+
+    await sio.emit('publicView', {
+        'exchangeList': [
+            "bitfinex",
+            "bitmex",
+            "bitstamp",
+            "bittrex",
+            "cex",
+            "gdax",
+            "kraken",
+            "poloniex"
+        ],
+        'masterPairs': [[pair, pair] for pair in spreads_by_pairs.keys()],
+        'btc_usd': [
+            {update_time: [
+                {
+                    'apiSatus': '',
+                    'ask': "7155.9000",
+                    'askBuy': "7155.0750",
+                    'askLotVolume': '',
+                    'bid': "7150.4000",
+                    'bidAskSpread': 0.08,
+                    'bidLotVolume': '',
+                    'bidSell': "7151.2250",
+                    'exchange': "bitfinex",
+                    'isFrozen': '',
+                    'lastPrice': "7150.5000",
+                    'lastTradeTime': "1510244612.2000005",
+                    'lastTradeVolume': '',
+                    'lastUpdated': 1510244615735,
+                    'trades24': '',
+                    'uniquePair': "BTCUSD",
+                    'volume24': "105568.3536",
+                    'volume30': '',
+                    'vwap': ''
+                }
+            ]}
+        ],
+        'data': [{update_time: {
+            'dataByPairPrice': {'btc_usd': [
+                {
+                    'apiStatus': '',
+                    'ask': '0.0868010',
+                    'askBuy': '0.0867854',
+                    'askLotVolume': '',
+                    'bid': '0.0866970',
+                    'bidAskSpread': 0.12,
+                    'bidLotVolume': '',
+                    'bidSell': "0.0867126",
+                    'exchange': "bitfinex",
+                    'isFrozen': '',
+                    'lastPrice': "0.0868010",
+                    'lastTradeTime': "1510244615.9965863",
+                    'lastTradeVolume': '',
+                    'lastUpdated': 1510244616838,
+                    'trades24': '',
+                    'uniquePair': "BTCUSD",
+                    'volume24': "96876.7078",
+                    'volume30': '',
+                    'vwap': ''
+                },
+                {
+                    'apiStatus': '',
+                    'ask': '0.0838010',
+                    'askBuy': '0.0867854', # данные с процентами биржи?
+                    'askLotVolume': '',
+                    'bid': '0.0836970',
+                    'bidAskSpread': 2.13,
+                    'bidLotVolume': '',
+                    'bidSell': "0.0867126", # данные с процентами биржи?
+                    'exchange': "bittrex",
+                    'isFrozen': '',
+                    'lastPrice': "0.0838010", # совпадает с ask
+                    'lastTradeTime': "1510244615.9965863",
+                    'lastTradeVolume': '',
+                    'lastUpdated': 1510244616838,
+                    'trades24': '',
+                    'uniquePair': "BTCUSD",
+                    'volume24': "96876.7078",
+                    'volume30': '',
+                    'vwap': ''
+                },
+            ]},
+            'spreads': {
+                'minmax': {
+                    'byBidAsk': {
+                        'max': {
+                            'exchange': 'cex',
+                            'pair': 'bch_btc',
+                            'val': 2.13
+                        },
+                        'min': {
+                            'exchange': 'bittrex',
+                            'pair': 'lsk_btc',
+                            'val': 0.01
+                        }
+                    },
+                    'byLastPrice': {
+                        'max': {
+                            'exchangeHigh': 'cex',
+                            'exchangeLow': 'kraken',
+                            'pair': 'bch_usd',
+                            'val': 4.16
+                        },
+                        'min': {
+                            'exchangeHigh': 'bittrex',
+                            'exchangeLow': 'bitfinex',
+                            'pair': 'neo_btc',
+                            'val': 0.05
+                        }
+                    }
+                },
+                'pairs': spreads_by_pairs
+            },
+            'updated': {
+                'readable': "Thursday, November 9th 2017, 4:24:05 pm"
+            }
+        }}]
+    }, namespace='/chat')
+
 
 async def calculate_arbitrage2(pair):
     if pair in lowestAskPair and pair in highestBidPair and lowestAskPair[pair][1] != highestBidPair[pair][1]:
@@ -241,6 +397,9 @@ async def calculate_arbitrage2(pair):
                 'lowestAskExchange': lowestAskPair[pair][1],
                 'highestBidExchange': highestBidPair[pair][1],
             }
+            # TODO: store most old exchange record to arbitrage updated time
+            # TODO: also update time when arbitrage was not changed
+            # TODO: like ETH/BTC for bittrex/poloniex should have updated time for oldest exchange update
             if pair not in arbitrage_stats or arbitrage_stats[pair]['arbitrage'] != last_arbitrage:
                 if spread_percent > 1:
                     if pair not in arbitrage_stats:
@@ -248,8 +407,11 @@ async def calculate_arbitrage2(pair):
                     elif arbitrage_stats[pair]['arbitrage'] != last_arbitrage:
                         logger.info("found updated arbitrage: ")
 
+                    updated_time = min(exchange_pair_updated[pair][lowestAskPair[pair][1]],
+                        exchange_pair_updated[pair][highestBidPair[pair][1]])
+
                     arbitrage_stats[pair] = {
-                        'time': time(),
+                        'time': updated_time,
                         'arbitrage': last_arbitrage,
                         'lowestBASpread': lowestAskPair[pair][2],
                         'highestBASpread': highestBidPair[pair][2]
@@ -262,13 +424,16 @@ async def calculate_arbitrage2(pair):
                     logger.info("buy for %.8f at %s, sell for %.8f at %s" %
                           (last_arbitrage['lowestAskPrice'], last_arbitrage['lowestAskExchange'],
                            last_arbitrage['highestBidPrice'], last_arbitrage['highestBidExchange']))
+                    await send_update(pair)
                 elif pair in arbitrage_stats:
                     logger.info("arbitrage liquidated:")
                     logger.info("pair %s spread %.8f (%.3f%%) exchanges: %s/%s" % (pair,
                           last_arbitrage['spread'], last_arbitrage['spread_percent'],
                           last_arbitrage['lowestAskExchange'], last_arbitrage['highestBidExchange']))
                     logger.info("was alive %.1f seconds" % (time() - arbitrage_stats[pair]['time']))
+                    # TODO: save arbitrage history (influxdb)
                     del(arbitrage_stats[pair])
+                    await send_update(pair)
 
 async def calculate_arbitrage(pair, exchange_id, lowestAsk, highestBid, BASpread):
     if (not pair in lowestAskPair) or lowestAskPair[pair][0] > lowestAsk or \
@@ -314,10 +479,9 @@ async def check_wallets(pair, wallet_exchanges):
                 debug("false")
     return False
 
-
 async def main(exchange, markets):
     async for (exchange_id, pair, orderbook) in get_orders(exchange, markets):
-        debug("got data from %s" % exchange_id)
+        logger.debug("got data from %s" % exchange_id)
         # first skip non BTC pairs
         if pair.split('/')[1] != 'BTC': continue
         if not (len(orderbook['asks']) == 0 or len(orderbook['bids']) == 0):
@@ -326,14 +490,18 @@ async def main(exchange, markets):
             BASpread = (orderbook['asks'][0][0] - orderbook['bids'][0][0]) / (orderbook['asks'][0][0] / 100)
             await calculate_arbitrage(pair, exchange_id, lowestAsk, highestBid, BASpread)
 
-try:
-    loop.run_until_complete(asyncio.gather(*[asyncio.ensure_future(main(exchange, markets)) \
-                            for exchange, markets in coins_by_exchange.items()]))
-except:
-    type, value, tb = sys.exc_info()
-    traceback.print_exc()
-    last_frame = lambda tb=tb: last_frame(tb.tb_next) if tb.tb_next else tb
-    frame = last_frame().tb_frame
-    ns = dict(frame.f_globals)
-    ns.update(frame.f_locals)
-    code.interact(local=ns)
+# try:
+loop.run_until_complete(asyncio.gather(*([asyncio.ensure_future(main(exchange, markets)) \
+                        for exchange, markets in coins_by_exchange.items()]+[asyncio.ensure_future(web.run_app(app))])))
+
+# TODO: save spreads on ctrl-c and load when start
+# TODO: show last spreads on connect
+# TODO: show spread living time + updated time (n seconds ago)
+# except:
+#     type, value, tb = sys.exc_info()
+#     traceback.print_exc()
+#     last_frame = lambda tb=tb: last_frame(tb.tb_next) if tb.tb_next else tb
+#     frame = last_frame().tb_frame
+#     ns = dict(frame.f_globals)
+#     ns.update(frame.f_locals)
+#     code.interact(local=ns)
