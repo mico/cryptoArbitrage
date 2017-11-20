@@ -51,6 +51,7 @@ coins = {}
 cheapest_ask = {}
 high_bid = {}
 current_pair = 0
+exchange_pair_updated = {}
 
 config = yaml.safe_load(open("config.yml"))
 logger = logging.getLogger('arbit')
@@ -168,28 +169,30 @@ async def get_orders(id, markets):
             try:
                 result = await exchanges[id].fetch_order_book(market)
             except ccxt.errors.RequestTimeout:
-                print("%s for %s timeout" % (id, market))
+                logger.error("%s for %s timeout" % (id, market))
                 orders_error += 1
             except TypeError:
-                print("%s for %s type error" % (id, market))
+                logger.error("%s for %s type error" % (id, market))
                 orders_error += 1
             except ccxt.errors.ExchangeError:
-                print("%s for %s exchange error" % (id, market))
+                logger.error("%s for %s exchange error" % (id, market))
                 orders_error += 1
             except ccxt.errors.DDoSProtection:
-                print("%s for %s rate limit" % (id, market))
+                logger.error("%s for %s rate limit" % (id, market))
                 orders_error += 1
             except aiohttp.client_exceptions.ClientOSError:
-                print("%s for %s connection reset" % (id, market))
+                logger.error("%s for %s connection reset" % (id, market))
                 orders_error += 1
             except ccxt.errors.ExchangeNotAvailable:
-                print("%s for %s exchange error" % (id, market))
+                logger.error("%s for %s exchange error" % (id, market))
                 orders_error += 1
             else:
-                debug("%s/%s got %s for %s (%s/%s)" % (current_request, total_requests, market, id,
+                logger.debug("%s/%s got %s for %s (%s/%s)" % (current_request, total_requests, market, id,
                                                        current_market, len(markets)))
-                #print("got ZRX/BTC for hitbtc2 (got first time)")
-                #print("got ZRX/BTC for hitbtc2 (last update at 12:30:33, got 3rd time)")
+                if market not in exchange_pair_updated:
+                    exchange_pair_updated[market] = {id: time()}
+                else:
+                    exchange_pair_updated[market][id] = time()
                 orders[market] = result
                 yield [id, market, result]
                 orders_success += 1
@@ -250,6 +253,7 @@ async def send_update(pair):
             'spreadLastPrice': "",
             'spreadLastPriceMaxExchange': [0, 0],
             'spreadLastPriceMinExchange': [0, 0],
+            'lastUpdated': time()
         }
     else:
         spreads_by_pairs[pair] = {
@@ -258,11 +262,10 @@ async def send_update(pair):
             'spreadLastPrice': "%.2f" % float(arbitrage_stats[pair]['arbitrage']['spread_percent']),
             'spreadLastPriceMaxExchange': ["%.8f" % arbitrage_stats[pair]['arbitrage']['highestBidPrice'], arbitrage_stats[pair]['arbitrage']['highestBidExchange']],
             'spreadLastPriceMinExchange': ["%.8f" % arbitrage_stats[pair]['arbitrage']['lowestAskPrice'], arbitrage_stats[pair]['arbitrage']['lowestAskExchange']],
+            'lastUpdated': arbitrage_stats[pair]['time']
         }
 
     update_time = int(time())
-
-    logger.info("send update!!!")
 
     await sio.emit('publicView', {
         'exchangeList': [
@@ -407,6 +410,7 @@ async def calculate_arbitrage2(pair):
                     elif arbitrage_stats[pair]['arbitrage'] != last_arbitrage:
                         logger.info("found updated arbitrage: ")
 
+                    # pdb.set_trace()
                     updated_time = min(exchange_pair_updated[pair][lowestAskPair[pair][1]],
                         exchange_pair_updated[pair][highestBidPair[pair][1]])
 
@@ -431,7 +435,9 @@ async def calculate_arbitrage2(pair):
                           last_arbitrage['spread'], last_arbitrage['spread_percent'],
                           last_arbitrage['lowestAskExchange'], last_arbitrage['highestBidExchange']))
                     logger.info("was alive %.1f seconds" % (time() - arbitrage_stats[pair]['time']))
-                    # TODO: save arbitrage history (influxdb)
+                    # TODO: save arbitrage history (influxdb) before drop
+                    # TODO: what to do with arbitrage changes??? (save min-max values)
+                    # and display it then as 1.23-1.45%
                     del(arbitrage_stats[pair])
                     await send_update(pair)
 
@@ -467,16 +473,16 @@ async def check_wallets(pair, wallet_exchanges):
             for currency in pair.split('/'):
                 if currency == 'BTC': continue
                 try:
-                    debug("checking wallet %s at %s" % (currency, exchange))
+                    logger.debug("checking wallet %s at %s" % (currency, exchange))
                     # XXX: use another loop
                     if await exchanges[exchange].wallet_disabled(currency):
                     # if asyncio.get_event_loop().run_until_complete():
-                        debug("true")
+                        logger.debug("true")
                         return True
                 except ccxt.errors.RequestTimeout:
-                    debug("%s request timeout" % exchange)
+                    logger.debug("%s request timeout" % exchange)
                     pass
-                debug("false")
+                logger.debug("false")
     return False
 
 async def main(exchange, markets):
@@ -490,18 +496,18 @@ async def main(exchange, markets):
             BASpread = (orderbook['asks'][0][0] - orderbook['bids'][0][0]) / (orderbook['asks'][0][0] / 100)
             await calculate_arbitrage(pair, exchange_id, lowestAsk, highestBid, BASpread)
 
-# try:
-loop.run_until_complete(asyncio.gather(*([asyncio.ensure_future(main(exchange, markets)) \
-                        for exchange, markets in coins_by_exchange.items()]+[asyncio.ensure_future(web.run_app(app))])))
+try:
+    loop.run_until_complete(asyncio.gather(*([asyncio.ensure_future(main(exchange, markets)) \
+                            for exchange, markets in coins_by_exchange.items()]+[asyncio.ensure_future(web.run_app(app))])))
 
 # TODO: save spreads on ctrl-c and load when start
 # TODO: show last spreads on connect
 # TODO: show spread living time + updated time (n seconds ago)
-# except:
-#     type, value, tb = sys.exc_info()
-#     traceback.print_exc()
-#     last_frame = lambda tb=tb: last_frame(tb.tb_next) if tb.tb_next else tb
-#     frame = last_frame().tb_frame
-#     ns = dict(frame.f_globals)
-#     ns.update(frame.f_locals)
-#     code.interact(local=ns)
+except:
+    type, value, tb = sys.exc_info()
+    traceback.print_exc()
+    last_frame = lambda tb=tb: last_frame(tb.tb_next) if tb.tb_next else tb
+    frame = last_frame().tb_frame
+    ns = dict(frame.f_globals)
+    ns.update(frame.f_locals)
+    code.interact(local=ns)

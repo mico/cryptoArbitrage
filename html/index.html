@@ -252,9 +252,10 @@
             <th class="mobile d-bid">Low B/A Exchange</th>\
             <th class="mobile d-bid">High Bid/Ask Spread</th>\
             <th class="mobile d-bid">High B/A Exchange</th>\
+            <th class="mobile-d-all">Last updated</th>\
             </tr>\
           </thead>\
-          <tbody><tr><td colspan="11" class="table-updated-at mobile-d-all">'+updated+'</td></tr>\
+          <tbody><tr><td colspan="12" class="table-updated-at mobile-d-all">'+updated+'</td></tr>\
           </tbody>\
         </table>\
         ')
@@ -272,6 +273,7 @@
           <td class="data-exchange mobile d-bid">'+spreads.pairs[pairKey].spreadBidAskMin[1]+'</td>\
           <td class="spread-overview-ba mobile d-bid">'+spreads.pairs[pairKey].spreadBidAskMax[0]+'%</td>\
           <td class="data-exchange mobile d-bid">'+spreads.pairs[pairKey].spreadBidAskMax[1]+'</td>\
+          <td class="data-pair mobile-d-all">'+getTime(spreads.pairs[pairKey].lastUpdated)+'</td>\
         </tr>')
       }
       loopcount = loopcount + 1
@@ -543,6 +545,11 @@ function readable(t){
   //var tz = t.match(/\(([A-Za-z\s].*)\)/)[1]
   //t = t.split('GMT')[0] + tz
   return t
+}
+
+function getTime(t){
+  t = new Date(+t)
+  return t.getHours() + ":" + t.getMinutes() + ":" + t.getSeconds()
 }
 
   function buildFilterByCurrency(masterPairs){
