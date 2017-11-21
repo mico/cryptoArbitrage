@@ -253,9 +253,10 @@
             <th class="mobile d-bid">High Bid/Ask Spread</th>\
             <th class="mobile d-bid">High B/A Exchange</th>\
             <th class="mobile-d-all">Last updated</th>\
+            <th class="mobile-d-all">Time found</th>\
             </tr>\
           </thead>\
-          <tbody><tr><td colspan="12" class="table-updated-at mobile-d-all">'+updated+'</td></tr>\
+          <tbody><tr><td colspan="13" class="table-updated-at mobile-d-all">'+updated+'</td></tr>\
           </tbody>\
         </table>\
         ')
@@ -274,6 +275,7 @@
           <td class="spread-overview-ba mobile d-bid">'+spreads.pairs[pairKey].spreadBidAskMax[0]+'%</td>\
           <td class="data-exchange mobile d-bid">'+spreads.pairs[pairKey].spreadBidAskMax[1]+'</td>\
           <td class="data-pair mobile-d-all">'+getTime(spreads.pairs[pairKey].lastUpdated)+'</td>\
+          <td class="data-pair mobile-d-all">'+getTime(spreads.pairs[pairKey].timeFound)+'</td>\
         </tr>')
       }
       loopcount = loopcount + 1
@@ -540,7 +542,7 @@ function drawLatestTables(clientData,masterPairs){
   }
 }
 function readable(t){
-  t = new Date(+t)
+  t = new Date(t*1000)
   t = t.toString()
   //var tz = t.match(/\(([A-Za-z\s].*)\)/)[1]
   //t = t.split('GMT')[0] + tz
@@ -548,8 +550,8 @@ function readable(t){
 }
 
 function getTime(t){
-  t = new Date(+t)
-  return t.getHours() + ":" + t.getMinutes() + ":" + t.getSeconds()
+  t = new Date(t*1000)
+  return t.toTimeString().split('GMT')[0]
 }
 
   function buildFilterByCurrency(masterPairs){

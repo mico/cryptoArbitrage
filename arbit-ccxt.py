@@ -18,10 +18,6 @@ import logging
 
 # make debug log
 
-# арбитраж между тайскими биржами
-# lowestAsk, highestBid
-# bid - покупка, ask - продажа (дороже)
-
 # - проверка что кошелек доступен для ввода-вывода
 # для yobit = ex.privatePostGetDepositAddress('EXP')
 # >>> ex.privatePostGetDepositAddress({'coinName': 'EXP'})
@@ -262,7 +258,8 @@ async def send_update(pair):
             'spreadLastPrice': "%.2f" % float(arbitrage_stats[pair]['arbitrage']['spread_percent']),
             'spreadLastPriceMaxExchange': ["%.8f" % arbitrage_stats[pair]['arbitrage']['highestBidPrice'], arbitrage_stats[pair]['arbitrage']['highestBidExchange']],
             'spreadLastPriceMinExchange': ["%.8f" % arbitrage_stats[pair]['arbitrage']['lowestAskPrice'], arbitrage_stats[pair]['arbitrage']['lowestAskExchange']],
-            'lastUpdated': arbitrage_stats[pair]['time']
+            'lastUpdated': int(arbitrage_stats[pair]['time']),
+            'timeFound': int(arbitrage_stats[pair]['time_found']),
         }
 
     update_time = int(time())
@@ -400,26 +397,33 @@ async def calculate_arbitrage2(pair):
                 'lowestAskExchange': lowestAskPair[pair][1],
                 'highestBidExchange': highestBidPair[pair][1],
             }
-            # TODO: store most old exchange record to arbitrage updated time
-            # TODO: also update time when arbitrage was not changed
-            # TODO: like ETH/BTC for bittrex/poloniex should have updated time for oldest exchange update
+            updated_time = min(exchange_pair_updated[pair][lowestAskPair[pair][1]],
+                exchange_pair_updated[pair][highestBidPair[pair][1]])
             if pair not in arbitrage_stats or arbitrage_stats[pair]['arbitrage'] != last_arbitrage:
                 if spread_percent > 1:
                     if pair not in arbitrage_stats:
                         logger.info("found new arbitrage: ")
+                        arbitrage_stats[pair] = {
+                            'time': updated_time,
+                            'time_found': time(),
+                            'arbitrage': last_arbitrage,
+                            'lowestBASpread': lowestAskPair[pair][2],
+                            'highestBASpread': highestBidPair[pair][2]
+                        }
+
                     elif arbitrage_stats[pair]['arbitrage'] != last_arbitrage:
                         logger.info("found updated arbitrage: ")
-
-                    # pdb.set_trace()
-                    updated_time = min(exchange_pair_updated[pair][lowestAskPair[pair][1]],
-                        exchange_pair_updated[pair][highestBidPair[pair][1]])
-
-                    arbitrage_stats[pair] = {
-                        'time': updated_time,
-                        'arbitrage': last_arbitrage,
-                        'lowestBASpread': lowestAskPair[pair][2],
-                        'highestBASpread': highestBidPair[pair][2]
-                    }
+                        # TODO: if the same exchanges - do not update time found
+                        # NEXT: if same exchanges but spread became lesser - update time found
+                        # or became less just for 5% - do not update, more - update
+                        # became bigger - not update
+                        arbitrage_stats[pair] = {
+                            'time': updated_time,
+                            'time_found': time(),
+                            'arbitrage': last_arbitrage,
+                            'lowestBASpread': lowestAskPair[pair][2],
+                            'highestBASpread': highestBidPair[pair][2]
+                        }
 
                     # show dropped dropped arbitrage (become < 1%)
                     logger.info("pair %s spread %.8f (%.3f%%) exchanges: %s/%s" % (pair,
@@ -440,6 +444,10 @@ async def calculate_arbitrage2(pair):
                     # and display it then as 1.23-1.45%
                     del(arbitrage_stats[pair])
                     await send_update(pair)
+            elif pair in arbitrage_stats:
+                # arbitrage not changed
+                arbitrage_stats[pair]['time'] = updated_time
+                await send_update(pair)
 
 async def calculate_arbitrage(pair, exchange_id, lowestAsk, highestBid, BASpread):
     if (not pair in lowestAskPair) or lowestAskPair[pair][0] > lowestAsk or \
