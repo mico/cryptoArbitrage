@@ -3,6 +3,10 @@ exchanges:
   yobit:
     apiKey: xxx
     secret: xxx
+coinigy:
+  apiKey: xxx
+  apiSecret: xxx
+
 # minimum volume in btc
 minimal_volume: 0.1
 # spread in percent
