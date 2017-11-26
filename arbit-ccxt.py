@@ -2,7 +2,6 @@
 
 from aiohttp import web
 import socketio
-from threading import Thread
 
 import asyncio
 import os
@@ -10,18 +9,12 @@ import sys
 from time import time
 import yaml
 from influxdb import InfluxDBClient
-import urllib.request as _urllib
-import urllib
 
 import ccxt.async as ccxt # noqa: E402
 import pdb, traceback, code
 import pickle
 import aiohttp.client_exceptions
 import logging
-from socketclusterclient import Socketcluster
-import json
-
-#.setLevel(logging.ERROR)
 
 # make debug log
 
@@ -392,7 +385,6 @@ async def send_update(pair):
 
 
 async def calculate_arbitrage2(pair):
-    #logger.info("calculate arbitrage for %s" % pair)
     if pair in lowestAskPair and pair in highestBidPair and lowestAskPair[pair][1] != highestBidPair[pair][1]:
         spread = highestBidPair[pair][0] - lowestAskPair[pair][0]
         spread_percent = spread / (lowestAskPair[pair][0] / 100)
@@ -479,10 +471,7 @@ def calculate_price_by_volume(orderbook):
     else:
         print("total volume %s instead of %s needed for %s orders" % (total_volume, config['minimal_volume'], len(prices)))
 
-    try:
-        return sum(prices)/len(prices)
-    except:
-        pdb.set_trace()
+    return sum(prices)/len(prices)
 
 # check if wallet deposit is disabled on exchange
 async def check_wallets(pair, wallet_exchanges):
@@ -515,135 +504,18 @@ async def main(exchange, markets):
             BASpread = (orderbook['asks'][0][0] - orderbook['bids'][0][0]) / (orderbook['asks'][0][0] / 100)
             await calculate_arbitrage(pair, exchange_id, lowestAsk, highestBid, BASpread)
 
-# try:
-#     loop.run_until_complete(asyncio.gather(*([asyncio.ensure_future(main(exchange, markets)) \
-#                             for exchange, markets in coins_by_exchange.items()]+[asyncio.ensure_future(web.run_app(app))])))
-
-# take exchanges list from coinigy
-headers = {
-  'Content-Type': 'application/json',
-  'X-API-KEY': config['coinigy']['apiKey'],
-  'X-API-SECRET': config['coinigy']['apiSecret']
-}
-
-import requests
-r = requests.post("https://api.coinigy.com/api/v1/exchanges", headers=headers)
-
-coinigy_exchanges = json.loads(r.text)['data']
-
-async def orders_stream_message(key, data):
-    # fill orders here
-    # {"exchange": "BTRX", "label": "ETH/BTC", "ordertype": "Buy", "price": 0.04429989, "quantity": 1.24569429,
-    # "timestamp": "2017-11-21 06:49:55", "total": 0.0551841200206281}
-    # {"exchange": "BTRX", "label": "ETH/BTC", "ordertype": "Sell", "price": 0.04457177, "quantity": 0.01121786,
-    # "timestamp": "2017-11-21 06:49:55", "total": 0.0004999998758122}
-    # I hope one message - one exchange and pair
-    #print ("\n\n\nGot data "+json.dumps(data, sort_keys=True)+" from channel "+key)
-    # print("new data:")
-
-    # 'ORDER-HITB--DOGE--BTC'
-    (type, exchange, _, pair_from, _, pair_to) = key.split('-')
-    pair = pair_from + '/' + pair_to
-
-    # filter by type then map to standard orderbooks (price, volume)
-    bids = list(map(lambda x: [float(x['price']), float(x['total'])] ,filter(lambda x: x['ordertype'] == 'Buy', data)))
-    asks = list(map(lambda x: [float(x['price']), float(x['total'])] ,filter(lambda x: x['ordertype'] == 'Sell', data)))
-    asks.reverse()
-
-    # for row in data:
-    #     pdb.set_trace()
-    #     if row['label'] != pair:
-    #         pair = row['label']
-    #         print("pair %s" % pair)
-    #     if row['exchange'] != exchange:
-    #         exchange = row['exchange']
-    #         print("exchange %s" % exchange)
-
-    if pair.split('/')[1] != 'BTC': return
-
-    if not (len(asks) == 0 or len(bids) == 0):
-        lowestAsk = calculate_price_by_volume(asks)
-        highestBid = calculate_price_by_volume(bids)
-        BASpread = (asks[0][0] - bids[0][0]) / (asks[0][0] / 100)
-        #loop = asyncio.get_event_loop()
-        await calculate_arbitrage(pair, exchange_id, lowestAsk, highestBid, BASpread)
-
-        #await
-
-async def subscribe_to_channels(socket):
-    for exchange_id, markets in coins_by_exchange.items():
-        if exchange_id == 'hitbtc2': exchange_id = 'hitbtc'
-        for market in markets:
-            # {'exch_id': '4', 'exch_name': 'Bitstamp', 'exch_code': 'BITS',
-            # 'exch_fee': '0.0025', 'exch_trade_enabled': '1',
-            # 'exch_balance_enabled': '1', 'exch_url': 'https://www.bitstamp.net/'}
-            channel = None
-            for exchange_row in coinigy_exchanges:
-                if exchange_row['exch_name'].lower() == exchange_id:
-                    channel = 'ORDER-%s--%s--%s' % (exchange_row['exch_code'],
-                                                   market.split('/')[0], market.split('/')[1])
-                    break
-            # pdb.set_trace()
-            logger.info("subscribe to %s" % channel)
-            await socket.subscribe(channel)
-            socket.onchannel(channel, orders_stream_message)
-
-    async def ack(eventname, error, data):
-        #print ("\n\n\nGot ack data " + json.dumps(data, sort_keys=True) + " and eventname is " + eventname)
-        pass
-    #await socket.emitack("exchanges", None, ack)
-    #await socket.emitack("channels", "OK", ack)
-
-def onSetAuthentication(socket, token):
-    logging.info("Token received " + token)
-    socket.setAuthtoken(token)
-
-async def onAuthentication(socket, isauthenticated):
-    logging.info("Authenticated is " + str(isauthenticated))
-    async def ack(eventname, error, data):
-        print ("token is "+ json.dumps(data, sort_keys=True))
-        await subscribe_to_channels(socket);
-
-    await socket.emitack("auth", config['coinigy'], ack)
-
-# {'exch_id': '4', 'exch_name': 'Bitstamp', 'exch_code': 'BITS', 'exch_fee': '0.0025', 'exch_trade_enabled': '1',
-# 'exch_balance_enabled': '1', 'exch_url': 'https://www.bitstamp.net/'}
-
-socket = Socketcluster.socket("wss://sc-02.coinigy.com/socketcluster/")
-Socketcluster.logging.basicConfig(format='%(levelname)s:%(message)s', level=logging.ERROR)
-
-#socket.setBasicListener(onconnect, ondisconnect, onConnectError)
-socket.setAuthenticationListener(onSetAuthentication, onAuthentication)
-socket.setreconnection(False)
-loop = asyncio.get_event_loop()
-
-@asyncio.coroutine
-async def connect():
-    await asyncio.wait()
-
-
-async def run_webapp():
-    done, pending = await asyncio.wait(
-        [asyncio.ensure_future(socket.connect()), asyncio.ensure_future(web.run_app(app))],
-        return_when=asyncio.FIRST_COMPLETED)
-    #web.run_app(app)
-
-
-#Thread(target=run_webapp).start()
-#connect()
-
-#asyncio.async(connect())
-loop.run_until_complete(asyncio.gather(asyncio.ensure_future(socket.connect()), asyncio.ensure_future(web.run_app(app))))
-
+try:
+    loop.run_until_complete(asyncio.gather(*([asyncio.ensure_future(main(exchange, markets)) \
+                            for exchange, markets in coins_by_exchange.items()]+[asyncio.ensure_future(web.run_app(app))])))
 
 # TODO: save spreads on ctrl-c and load when start
 # TODO: show last spreads on connect
 # TODO: show spread living time + updated time (n seconds ago)
-# except:
-#     type, value, tb = sys.exc_info()
-#     traceback.print_exc()
-#     last_frame = lambda tb=tb: last_frame(tb.tb_next) if tb.tb_next else tb
-#     frame = last_frame().tb_frame
-#     ns = dict(frame.f_globals)
-#     ns.update(frame.f_locals)
-#     code.interact(local=ns)
+except:
+    type, value, tb = sys.exc_info()
+    traceback.print_exc()
+    last_frame = lambda tb=tb: last_frame(tb.tb_next) if tb.tb_next else tb
+    frame = last_frame().tb_frame
+    ns = dict(frame.f_globals)
+    ns.update(frame.f_locals)
+    code.interact(local=ns)
