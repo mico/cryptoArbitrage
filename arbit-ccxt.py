@@ -41,7 +41,8 @@ import logging
 #                 'hitbtc2','coincheck', 'bleutrade', 'bitmex']
 # TODO: fix bitfinex rate limit
 # TODO: add bitshares dex
-exchange_ids = ['poloniex', 'hitbtc2', 'bittrex', 'exmo', 'liqui', 'binance']
+#exchange_ids = ['poloniex', 'hitbtc2', 'bittrex', 'exmo', 'liqui', 'binance']
+exchange_ids = ['bittrex', 'yobit']
 exchanges = {}
 coins = {}
 cheapest_ask = {}
@@ -62,7 +63,7 @@ ch.setFormatter(formatter)
 # add the handlers to the logger
 logger.addHandler(fh)
 logger.addHandler(ch)
-
+proxies = config['proxies']
 
 if config['use_cached_data']:
     file = open('cache.txt', 'rb')
@@ -134,7 +135,7 @@ async def hitbtc2_wallet_disabled(self, currency):
 if config['check_wallets']: ccxt.hitbtc2.wallet_disabled = hitbtc2_wallet_disabled
 
 for id in exchange_ids:
-    exchanges[id] = getattr(ccxt, id)({**{'enableRateLimit': True}, **(config['exchanges'][id] if id in config['exchanges'] else {})})
+    exchanges[id] = getattr(ccxt, id)({**{'enableRateLimit': True, 'proxies': proxies}, **(config['exchanges'][id] if id in config['exchanges'] else {})})
 
 markets_error = 0
 markets_success = 0
@@ -155,45 +156,52 @@ async def get_markets(id):
 
 orders_error = orders_success = 0
 
+async def fetch_order_book(id, market):
+    global current_request, orders_error, orders_success
+
+    try:
+        result = await exchanges[id].fetch_order_book(market)
+    except ccxt.errors.RequestTimeout:
+        logger.error("%s for %s timeout" % (id, market))
+        orders_error += 1
+    except TypeError:
+        logger.error("%s for %s type error" % (id, market))
+        orders_error += 1
+    except ccxt.errors.ExchangeError:
+        logger.error("%s for %s exchange error" % (id, market))
+        orders_error += 1
+    except ccxt.errors.DDoSProtection:
+        logger.error("%s for %s rate limit" % (id, market))
+        orders_error += 1
+    except aiohttp.client_exceptions.ClientOSError:
+        logger.error("%s for %s connection reset" % (id, market))
+        orders_error += 1
+    except ccxt.errors.ExchangeNotAvailable:
+        logger.error("%s for %s exchange error" % (id, market))
+        orders_error += 1
+    else:
+        logger.debug("%s/%s got %s for %s" % (current_request, total_requests, market, id
+                                               ))
+        current_request += 1
+        return [market, result]
+    return [market, []] # exception happens
+
 async def get_orders(id, markets):
     global current_request, orders_error, orders_success
     current_market = 1
     logger.info("load orders for %s" % id)
     orders = {}
     while True:
-        for market in markets:
-            try:
-                result = await exchanges[id].fetch_order_book(market)
-            except ccxt.errors.RequestTimeout:
-                logger.error("%s for %s timeout" % (id, market))
-                orders_error += 1
-            except TypeError:
-                logger.error("%s for %s type error" % (id, market))
-                orders_error += 1
-            except ccxt.errors.ExchangeError:
-                logger.error("%s for %s exchange error" % (id, market))
-                orders_error += 1
-            except ccxt.errors.DDoSProtection:
-                logger.error("%s for %s rate limit" % (id, market))
-                orders_error += 1
-            except aiohttp.client_exceptions.ClientOSError:
-                logger.error("%s for %s connection reset" % (id, market))
-                orders_error += 1
-            except ccxt.errors.ExchangeNotAvailable:
-                logger.error("%s for %s exchange error" % (id, market))
-                orders_error += 1
+        # async for (exchange_id, pair, orderbook) in get_orders(exchange, markets):
+        tasks = [fetch_order_book(id, market) for market in markets]
+        for market, result in await asyncio.gather(*tasks):
+            if market not in exchange_pair_updated:
+                exchange_pair_updated[market] = {id: time()}
             else:
-                logger.debug("%s/%s got %s for %s (%s/%s)" % (current_request, total_requests, market, id,
-                                                       current_market, len(markets)))
-                if market not in exchange_pair_updated:
-                    exchange_pair_updated[market] = {id: time()}
-                else:
-                    exchange_pair_updated[market][id] = time()
-                orders[market] = result
-                yield [id, market, result]
-                orders_success += 1
-            current_request += 1
-            current_market += 1
+                exchange_pair_updated[market][id] = time()
+            orders[market] = result
+            yield [id, market, result]
+        logger.info("finished %s" % id)
 
 loop = asyncio.get_event_loop()
 
@@ -498,7 +506,7 @@ async def main(exchange, markets):
         logger.debug("got data from %s" % exchange_id)
         # first skip non BTC pairs
         if pair.split('/')[1] != 'BTC': continue
-        if not (len(orderbook['asks']) == 0 or len(orderbook['bids']) == 0):
+        if len(orderbook) > 0 and (not (len(orderbook['asks']) == 0 or len(orderbook['bids']) == 0)):
             lowestAsk = calculate_price_by_volume(orderbook['asks'])
             highestBid = calculate_price_by_volume(orderbook['bids'])
             BASpread = (orderbook['asks'][0][0] - orderbook['bids'][0][0]) / (orderbook['asks'][0][0] / 100)
