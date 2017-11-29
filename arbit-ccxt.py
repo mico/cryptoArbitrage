@@ -2,6 +2,7 @@
 
 from aiohttp import web
 import socketio
+import ssl
 
 import asyncio
 import os
@@ -259,7 +260,11 @@ exchangeAsk = {}
 exchangeBid = {}
 spreads_by_pairs = {}
 
+last_update_send = 0
+
 async def send_update(pair):
+    global last_update_send;
+    if time() - last_update_send < 10: return
     if pair not in arbitrage_stats:
         # kind of dropping arbitrage
         spreads_by_pairs[pair] = {
@@ -283,6 +288,7 @@ async def send_update(pair):
 
     update_time = int(time())
 
+    last_update_send = time()
     await sio.emit('publicView', {
         'exchangeList': [
             "bitfinex",
