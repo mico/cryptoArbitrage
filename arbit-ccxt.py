@@ -42,7 +42,7 @@ import logging
 # TODO: fix bitfinex rate limit
 # TODO: add bitshares dex
 #exchange_ids = ['poloniex', 'hitbtc2', 'bittrex', 'exmo', 'liqui', 'binance']
-exchange_ids = ['bittrex', 'yobit']
+exchange_ids = ['bittrex', 'liqui', 'bitflyer', 'bitso', 'bleutrade', 'quadrigacx', 'quoine', 'wex']
 exchanges = {}
 coins = {}
 cheapest_ask = {}
@@ -105,7 +105,7 @@ async def yobit_wallet_disabled(self, currency):
                 config['query_base_prices']['cache_expire_in']) > time():
             return cached_data['wallet_disabled']['yobit'][currency]['value']
     try:
-        await self.privatePostGetDepositAddress({'coinName': currency})
+        await asyncio.ensure_future(self.privatePostGetDepositAddress({'coinName': currency}))
     except ccxt.errors.ExchangeError as error:
         #print(error)
         save_wallet_disabled('yobit', currency, True)
@@ -114,7 +114,7 @@ async def yobit_wallet_disabled(self, currency):
         save_wallet_disabled('yobit', currency, False)
         return False
 
-if config['check_wallets']: ccxt.yobit.wallet_disabled = yobit_wallet_disabled
+#if config['check_wallets']: ccxt.yobit.wallet_disabled = yobit_wallet_disabled
 
 # hitbtc проверять фьючерсы это или нет
 # GET /api/2/public/currency/{currency}
@@ -188,20 +188,26 @@ async def fetch_order_book(id, market):
 
 async def get_orders(id, markets):
     global current_request, orders_error, orders_success
-    current_market = 1
+    total_markets = len(markets)
     logger.info("load orders for %s" % id)
     orders = {}
+    finished_times = 0
     while True:
         # async for (exchange_id, pair, orderbook) in get_orders(exchange, markets):
+        start_time = time()
+        current_market = 1
         tasks = [fetch_order_book(id, market) for market in markets]
         for market, result in await asyncio.gather(*tasks):
+            logger.debug("getting %s (%s/%s) for %s" % (market, current_market, total_markets, id))
             if market not in exchange_pair_updated:
                 exchange_pair_updated[market] = {id: time()}
             else:
                 exchange_pair_updated[market][id] = time()
             orders[market] = result
+            current_market += 1
             yield [id, market, result]
-        logger.info("finished %s" % id)
+        finished_times += 1
+        logger.info("%s finished %s times, eplased %s sec" % (id, finished_times, (time() - start_time)))
 
 loop = asyncio.get_event_loop()
 
@@ -222,9 +228,13 @@ new_coins = {}
 
 for pair in coins:
     #if pair == 'DASH/BTC': new_coins[pair] = coins[pair]
-    if len(coins[pair]) > 1 and (pair.split('/')[1] not in ['USD', 'EUR', 'CNY']): new_coins[pair] = coins[pair]
+    if len(coins[pair]) > 1 and (pair.split('/')[1] in config['minimal_volume'].keys()): new_coins[pair] = coins[pair]
     #if len(new_coins) > 10: break
 total_pairs = len(new_coins.keys())
+logger.info("found %s pairs for arbitrage" % total_pairs)
+if total_pairs < 1:
+    logger.info("nothing for arbitrage, exit.")
+    sys.exit(1)
 
 # make pairs by exchange
 coins_by_exchange = {}
@@ -391,12 +401,19 @@ async def send_update(pair):
         }}]
     }, namespace='/chat')
 
+def save_liquidated_arbitrage():
+    pass
+
+def any_exchange_changed(last_arbitrage, previous_arbitrage):
+    return last_arbitrage['lowestAskExchange'] != previous_arbitrage['lowestAskExchange'] or \
+           last_arbitrage['highestBidExchange'] != previous_arbitrage['highestBidExchange']
 
 async def calculate_arbitrage2(pair):
     if pair in lowestAskPair and pair in highestBidPair and lowestAskPair[pair][1] != highestBidPair[pair][1]:
         spread = highestBidPair[pair][0] - lowestAskPair[pair][0]
         spread_percent = spread / (lowestAskPair[pair][0] / 100)
-        if not await check_wallets(pair, [lowestAskPair[pair][1],highestBidPair[pair][1]]):
+        wallet_disabled = await asyncio.ensure_future(check_wallets(pair, [lowestAskPair[pair][1],highestBidPair[pair][1]]))
+        if not wallet_disabled:
             last_arbitrage = {
                 'spread': spread,
                 'spread_percent': spread_percent,
@@ -409,7 +426,9 @@ async def calculate_arbitrage2(pair):
                 exchange_pair_updated[pair][highestBidPair[pair][1]])
             if pair not in arbitrage_stats or arbitrage_stats[pair]['arbitrage'] != last_arbitrage:
                 if spread_percent > 1:
-                    if pair not in arbitrage_stats:
+                    if pair not in arbitrage_stats or any_exchange_changed(last_arbitrage, arbitrage_stats[pair]['arbitrage']):
+                        if pair in arbitrage_stats and any_exchange_changed(last_arbitrage, arbitrage_stats[pair]['arbitrage']):
+                            save_liquidated_arbitrage()
                         logger.info("found new arbitrage: ")
                         arbitrage_stats[pair] = {
                             'time': updated_time,
@@ -425,13 +444,18 @@ async def calculate_arbitrage2(pair):
                         # NEXT: if same exchanges but spread became lesser - update time found
                         # or became less just for 5% - do not update, more - update
                         # became bigger - not update
-                        arbitrage_stats[pair] = {
-                            'time': updated_time,
-                            'time_found': time(),
-                            'arbitrage': last_arbitrage,
-                            'lowestBASpread': lowestAskPair[pair][2],
-                            'highestBASpread': highestBidPair[pair][2]
-                        }
+                        # arbitrage_stats[pair] = {
+                        #     'time': updated_time,
+                        #     'time_found': time(),
+                        #     'arbitrage': last_arbitrage,
+                        #     'lowestBASpread': lowestAskPair[pair][2],
+                        #     'highestBASpread': highestBidPair[pair][2]
+                        # }
+                        # do not touch time found
+                        arbitrage_stats[pair]['time'] = updated_time
+                        arbitrage_stats[pair]['arbitrage'] = last_arbitrage
+                        arbitrage_stats[pair]['lowestBASpread'] = lowestAskPair[pair][2]
+                        arbitrage_stats[pair]['highestBASpread'] = highestBidPair[pair][2]
 
                     # show dropped dropped arbitrage (become < 1%)
                     logger.info("pair %s spread %.8f (%.3f%%) exchanges: %s/%s" % (pair,
@@ -456,28 +480,32 @@ async def calculate_arbitrage2(pair):
                 # arbitrage not changed
                 arbitrage_stats[pair]['time'] = updated_time
                 await send_update(pair)
-
-async def calculate_arbitrage(pair, exchange_id, lowestAsk, highestBid, BASpread):
+async def getLowest(pair, exchange_id, lowestAsk, highestBid, BASpread):
     if (not pair in lowestAskPair) or lowestAskPair[pair][0] > lowestAsk or \
         pair in lowestAskPair and lowestAskPair[pair][1] == exchange_id and lowestAskPair[pair][0] < lowestAsk:
         lowestAskPair[pair] = [lowestAsk, exchange_id, BASpread]
         await calculate_arbitrage2(pair)
 
-        # calculate possible arbitrage and send update if changed
+async def getHighest(pair, exchange_id, lowestAsk, highestBid, BASpread):
     if (not pair in highestBidPair) or highestBidPair[pair][0] < highestBid or \
         pair in highestBidPair and highestBidPair[pair][1] == exchange_id and highestBidPair[pair][0] > highestBid:
         highestBidPair[pair] = [highestBid, exchange_id, BASpread]
         await calculate_arbitrage2(pair)
 
-def calculate_price_by_volume(orderbook):
+async def calculate_arbitrage(pair, exchange_id, lowestAsk, highestBid, BASpread):
+    await asyncio.gather(*[getLowest(pair, exchange_id, lowestAsk, highestBid, BASpread),
+                          getHighest(pair, exchange_id, lowestAsk, highestBid, BASpread)])
+        # calculate possible arbitrage and send update if changed
+
+def calculate_price_by_volume(currency, orderbook):
     prices = []
     total_volume = 0
     for order in orderbook:
         prices.append(order[0])
         total_volume += order[1]
-        if total_volume >= config['minimal_volume']: break
+        if total_volume >= config['minimal_volume'][currency]: break
     else:
-        print("total volume %s instead of %s needed for %s orders" % (total_volume, config['minimal_volume'], len(prices)))
+        print("total volume %s instead of %s needed for %s orders" % (total_volume, config['minimal_volume'][currency], len(prices)))
 
     return sum(prices)/len(prices)
 
@@ -504,26 +532,26 @@ async def check_wallets(pair, wallet_exchanges):
 async def main(exchange, markets):
     async for (exchange_id, pair, orderbook) in get_orders(exchange, markets):
         logger.debug("got data from %s" % exchange_id)
-        # first skip non BTC pairs
-        if pair.split('/')[1] != 'BTC': continue
+        # skip not defined currency volumes
+        if pair.split('/')[1] not in config['minimal_volume'].keys(): continue
         if len(orderbook) > 0 and (not (len(orderbook['asks']) == 0 or len(orderbook['bids']) == 0)):
-            lowestAsk = calculate_price_by_volume(orderbook['asks'])
-            highestBid = calculate_price_by_volume(orderbook['bids'])
+            lowestAsk = calculate_price_by_volume(pair.split('/')[1], orderbook['asks'])
+            highestBid = calculate_price_by_volume(pair.split('/')[1], orderbook['bids'])
             BASpread = (orderbook['asks'][0][0] - orderbook['bids'][0][0]) / (orderbook['asks'][0][0] / 100)
-            await calculate_arbitrage(pair, exchange_id, lowestAsk, highestBid, BASpread)
+            await asyncio.ensure_future(calculate_arbitrage(pair, exchange_id, lowestAsk, highestBid, BASpread))
 
-try:
-    loop.run_until_complete(asyncio.gather(*([asyncio.ensure_future(main(exchange, markets)) \
-                            for exchange, markets in coins_by_exchange.items()]+[asyncio.ensure_future(web.run_app(app))])))
+# try:
+loop.run_until_complete(asyncio.gather(*([asyncio.ensure_future(main(exchange, markets)) \
+                        for exchange, markets in coins_by_exchange.items()]+[asyncio.ensure_future(web.run_app(app))])))
 
 # TODO: save spreads on ctrl-c and load when start
 # TODO: show last spreads on connect
 # TODO: show spread living time + updated time (n seconds ago)
-except:
-    type, value, tb = sys.exc_info()
-    traceback.print_exc()
-    last_frame = lambda tb=tb: last_frame(tb.tb_next) if tb.tb_next else tb
-    frame = last_frame().tb_frame
-    ns = dict(frame.f_globals)
-    ns.update(frame.f_locals)
-    code.interact(local=ns)
+# except:
+#     type, value, tb = sys.exc_info()
+#     traceback.print_exc()
+#     last_frame = lambda tb=tb: last_frame(tb.tb_next) if tb.tb_next else tb
+#     frame = last_frame().tb_frame
+#     ns = dict(frame.f_globals)
+#     ns.update(frame.f_locals)
+#     code.interact(local=ns)

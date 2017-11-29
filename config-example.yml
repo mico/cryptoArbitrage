@@ -4,7 +4,10 @@ exchanges:
     apiKey: xxx
     secret: xxx
 # minimum volume in btc
-minimal_volume: 0.1
+minimal_volume:
+  BTC: 0.1
+  USD: 1000
+  RUB: 60000
 # spread in percent
 minimum_spread: 1
 # cache data for debugging purpose
