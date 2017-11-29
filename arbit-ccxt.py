@@ -42,7 +42,7 @@ import logging
 # TODO: fix bitfinex rate limit
 # TODO: add bitshares dex
 #exchange_ids = ['poloniex', 'hitbtc2', 'bittrex', 'exmo', 'liqui', 'binance']
-exchange_ids = ['bittrex', 'liqui', 'bitflyer', 'bitso', 'bleutrade', 'quadrigacx', 'quoine', 'wex']
+exchange_ids = ['bitfinex', 'poloniex', 'hitbtc2', 'bittrex']
 exchanges = {}
 coins = {}
 cheapest_ask = {}
@@ -63,7 +63,8 @@ ch.setFormatter(formatter)
 # add the handlers to the logger
 logger.addHandler(fh)
 logger.addHandler(ch)
-proxies = config['proxies']
+#proxies = config['proxies']
+proxies = yaml.safe_load(open("proxies.yml"))
 
 if config['use_cached_data']:
     file = open('cache.txt', 'rb')
@@ -505,7 +506,7 @@ def calculate_price_by_volume(currency, orderbook):
         total_volume += order[1]
         if total_volume >= config['minimal_volume'][currency]: break
     else:
-        print("total volume %s instead of %s needed for %s orders" % (total_volume, config['minimal_volume'][currency], len(prices)))
+        logger.debug("total volume %s instead of %s needed for %s orders" % (total_volume, config['minimal_volume'][currency], len(prices)))
 
     return sum(prices)/len(prices)
 
