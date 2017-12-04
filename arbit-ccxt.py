@@ -2,7 +2,6 @@
 
 from aiohttp import web
 import socketio
-import ssl
 
 import asyncio
 import os
@@ -38,12 +37,13 @@ import logging
 #buy for 0.00000987 at poloniex, sell for 0.01750046 at bittrex
 # - указывать торговую операцию с обьемом и доход с учетом обьема (в usd)
 
-# exchange_ids = ['poloniex', 'bittrex', 'bitfinex', 'bitstamp', 'cryptopia', 'exmo', 'liqui', 'quoine', 'nova', 'livecoin',\
+# exchange_ids = ['poloniex', 'bittrex', 'bitfinex', 'bitstamp', 'cryptopia', 'exmo', 'liqui', 'quoine', 'nova',\
 #                 'hitbtc2','coincheck', 'bleutrade', 'bitmex']
 # TODO: fix bitfinex rate limit
 # TODO: add bitshares dex
 #exchange_ids = ['poloniex', 'hitbtc2', 'bittrex', 'exmo', 'liqui', 'binance']
-exchange_ids = ['bitfinex', 'poloniex', 'hitbtc2', 'bittrex']
+# exchange_ids = ['bitfinex', 'poloniex', 'hitbtc2', 'bittrex']
+exchange_ids = ['bittrex', 'bitflyer', 'bleutrade', 'wex']
 exchanges = {}
 coins = {}
 cheapest_ask = {}
@@ -64,8 +64,8 @@ ch.setFormatter(formatter)
 # add the handlers to the logger
 logger.addHandler(fh)
 logger.addHandler(ch)
-#proxies = config['proxies']
-proxies = yaml.safe_load(open("proxies.yml"))
+proxies = config['proxies']
+# proxies = yaml.safe_load(open("proxies.yml"))
 
 if config['use_cached_data']:
     file = open('cache.txt', 'rb')
@@ -137,7 +137,7 @@ async def hitbtc2_wallet_disabled(self, currency):
 if config['check_wallets']: ccxt.hitbtc2.wallet_disabled = hitbtc2_wallet_disabled
 
 for id in exchange_ids:
-    exchanges[id] = getattr(ccxt, id)({**{'enableRateLimit': True, 'proxies': proxies}, **(config['exchanges'][id] if id in config['exchanges'] else {})})
+    exchanges[id] = getattr(ccxt, id)({**{'timeout': 20000,'enableRateLimit': True, 'proxies': proxies}, **(config['exchanges'][id] if id in config['exchanges'] else {})})
 
 markets_error = 0
 markets_success = 0
@@ -147,8 +147,8 @@ async def get_markets(id):
     logger.info("load markets for %s" % id)
     try:
         await exchanges[id].load_markets()
-    except(ccxt.errors.ExchangeNotAvailable, ccxt.errors.DDoSProtection, ccxt.errors.ExchangeError):
-        logger.error("exchange %s is not available" % id)
+    except(ccxt.errors.ExchangeNotAvailable, ccxt.errors.DDoSProtection, ccxt.errors.ExchangeError) as error:
+        logger.error("exchange %s is not available (%s)" % (id, error))
         markets_error += 1
     except ccxt.errors.RequestTimeout: # retry?
         logger.error("exchange %s timed out" % id)
@@ -172,14 +172,17 @@ async def fetch_order_book(id, market):
     except ccxt.errors.ExchangeError:
         logger.error("%s for %s exchange error" % (id, market))
         orders_error += 1
-    except ccxt.errors.DDoSProtection:
-        logger.error("%s for %s rate limit" % (id, market))
+    except ccxt.errors.DDoSProtection as error:
+        logger.error("%s for %s rate limit (%s)" % (id, market, error))
         orders_error += 1
     except aiohttp.client_exceptions.ClientOSError:
         logger.error("%s for %s connection reset" % (id, market))
         orders_error += 1
     except ccxt.errors.ExchangeNotAvailable:
         logger.error("%s for %s exchange error" % (id, market))
+        orders_error += 1
+    except ConnectionResetError:
+        logger.error("%s for %s exchange connection error" % (id, market))
         orders_error += 1
     else:
         logger.debug("%s/%s got %s for %s" % (current_request, total_requests, market, id
@@ -198,6 +201,8 @@ async def get_orders(id, markets):
         # async for (exchange_id, pair, orderbook) in get_orders(exchange, markets):
         start_time = time()
         current_market = 1
+        success_markets = 0
+        error_markets = 0
         tasks = [fetch_order_book(id, market) for market in markets]
         for market, result in await asyncio.gather(*tasks):
             logger.debug("getting %s (%s/%s) for %s" % (market, current_market, total_markets, id))
@@ -207,9 +212,13 @@ async def get_orders(id, markets):
                 exchange_pair_updated[market][id] = time()
             orders[market] = result
             current_market += 1
+            if len(result) == 0:
+                error_markets += 1
+            else:
+                success_markets += 1
             yield [id, market, result]
-        finished_times += 1
-        logger.info("%s finished %s times, eplased %s sec" % (id, finished_times, (time() - start_time)))
+        if success_markets != 0: finished_times += 1
+        logger.info("(%s/%s) %s finished %s times, eplased %s sec" % (len(markets), success_markets, id, finished_times, (time() - start_time)))
 
 loop = asyncio.get_event_loop()
 
@@ -551,6 +560,9 @@ async def main(exchange, markets):
 loop.run_until_complete(asyncio.gather(*([asyncio.ensure_future(main(exchange, markets)) \
                         for exchange, markets in coins_by_exchange.items()]+[asyncio.ensure_future(web.run_app(app))])))
 
+# ?
+# loop.create_task(handle_exception())
+# loop.run_forever()
 # TODO: save spreads on ctrl-c and load when start
 # TODO: show last spreads on connect
 # TODO: show spread living time + updated time (n seconds ago)
