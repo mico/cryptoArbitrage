@@ -1,5 +1,6 @@
 from requests import Session  # pip install requests
 from signalr import Connection  # pip install signalr-client
+import asyncio
 # import sys
 # sys.path.append('python-bittrex-websocket')
 #
@@ -49,6 +50,8 @@ from signalr import Connection  # pip install signalr-client
 
 market_connection_ids = {}
 orderbooks = {}
+
+# TODO: check Nounce and put on queue
 
 class Connection(Connection):
     def get_send_counter(self):
@@ -134,4 +137,8 @@ def main():
         # Value of 1 will not work, you will get disconnected
         connection.wait(120000)
 
-main()
+#main()
+
+async def run(callback):
+    asyncio.sleep(1)
+    yield ['bittrex', [], 'none']

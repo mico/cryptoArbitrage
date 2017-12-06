@@ -43,7 +43,7 @@ import logging
 # TODO: add bitshares dex
 #exchange_ids = ['poloniex', 'hitbtc2', 'bittrex', 'exmo', 'liqui', 'binance']
 # exchange_ids = ['bitfinex', 'poloniex', 'hitbtc2', 'bittrex']
-exchange_ids = ['bittrex', 'bitflyer', 'bleutrade', 'wex']
+exchange_ids = ['bittrex', 'poloniex', 'hitbtc']
 exchanges = {}
 coins = {}
 cheapest_ask = {}
@@ -137,7 +137,7 @@ async def hitbtc2_wallet_disabled(self, currency):
 if config['check_wallets']: ccxt.hitbtc2.wallet_disabled = hitbtc2_wallet_disabled
 
 for id in exchange_ids:
-    exchanges[id] = getattr(ccxt, id)({**{'timeout': 20000,'enableRateLimit': True, 'proxies': proxies}, **(config['exchanges'][id] if id in config['exchanges'] else {})})
+    exchanges[id] = getattr(ccxt, id)({**{'timeout': 20000,'enableRateLimit': True}, **(config['exchanges'][id] if id in config['exchanges'] else {})})
 
 markets_error = 0
 markets_success = 0
@@ -557,8 +557,17 @@ async def main(exchange, markets):
             await asyncio.ensure_future(calculate_arbitrage(pair, exchange_id, lowestAsk, highestBid, BASpread))
 
 # try:
-loop.run_until_complete(asyncio.gather(*([asyncio.ensure_future(main(exchange, markets)) \
-                        for exchange, markets in coins_by_exchange.items()]+[asyncio.ensure_future(web.run_app(app))])))
+import interfaces
+from functools import partial
+
+async def main_websocket(exchange, markets):
+    async for (exchange_id, orderbooks, updated_pair) in getattr(interfaces, exchange).run(markets):
+        print("got data from %s with updated %s" % (exchange_id, updated_pair))
+
+loop.run_until_complete(asyncio.gather(*([main_websocket(exchange, markets) for exchange, markets in coins_by_exchange.items()])))
+#loop.run_until_complete(asyncio.ensure_future(web.run_app(app)))
+#loop.run_until_complete(asyncio.gather(*([asyncio.ensure_future(main(exchange, markets)) \
+#                        for exchange, markets in coins_by_exchange.items()]+[])))
 
 # ?
 # loop.create_task(handle_exception())
