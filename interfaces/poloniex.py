@@ -2,10 +2,13 @@ import json
 import websockets
 import ccxt.async as ccxt
 
-# ex = ccxt.poloniex()
-
 
 class poloniex(ccxt.poloniex):
+    def get_market_by_poloniex_id(self, id):
+        for market, data in self.markets_by_id.items():
+            if data['info']['id'] == id:
+                return data['symbol']
+
     async def websocket_run(self, symbols):
         await self.load_markets()
         async with websockets.connect('wss://api2.poloniex.com') as websocket:
@@ -32,9 +35,8 @@ class poloniex(ccxt.poloniex):
                     else:
                         previous_sequence = message[1]
                     for row in message[2]:
+                        market = self.get_market_by_poloniex_id(message[0])
                         if row[0] == 'i':
-                            symbol = row[1]['currencyPair']
-                            market = self.markets_by_id[symbol]['symbol']
                             orderbooks[market] = {'asks': row[1]['orderBook'][0],
                                                       'bids': row[1]['orderBook'][1]}
                         if row[0] == 'o':
@@ -42,7 +44,10 @@ class poloniex(ccxt.poloniex):
                                 if row[1] == 1:
                                     del(orderbooks[market]['bids'][row[2]])
                                 else:
-                                    del(orderbooks[market]['asks'][row[2]])
+                                    try:
+                                        del(orderbooks[market]['asks'][row[2]])
+                                    except:
+                                        import pdb; pdb.set_trace()
                             else:
                                 if row[1] == 1:
                                     orderbooks[market]['bids'][row[2]] = row[3]
