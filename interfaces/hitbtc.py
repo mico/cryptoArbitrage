@@ -18,7 +18,6 @@ class hitbtc(ccxt.hitbtc2):
                             'bids': dict([[row['price'], row['size']/1000] for row in message['MarketDataSnapshotFullRefresh']['bid']]),
                             'asks': dict([[row['price'], row['size']/1000] for row in message['MarketDataSnapshotFullRefresh']['ask']])
                         }
-                    print("%s loaded..." % pair)
                 if 'MarketDataIncrementalRefresh' in message:
                     pair = self.markets_by_id[message['MarketDataIncrementalRefresh']['symbol']]['symbol']
                     if pair in orderbooks and pair in symbols:  # wait until full snapshot come
@@ -32,4 +31,7 @@ class hitbtc(ccxt.hitbtc2):
                                 orderbooks[pair]['bids'][row['price']] = row['size']/1000
                             else:
                                 del(orderbooks[pair]['bids'][row['price']])
-                        yield ['hitbtc', orderbooks, pair]
+                        yield ['hitbtc', {'asks': list(sorted(orderbooks[pair]['asks'].items())),
+                                          'bids': list(sorted(orderbooks[pair]['bids'].items(), reverse=True))
+                                          },
+                               pair]

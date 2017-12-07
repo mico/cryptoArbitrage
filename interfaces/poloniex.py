@@ -13,7 +13,6 @@ class poloniex(ccxt.poloniex):
         await self.load_markets()
         async with websockets.connect('wss://api2.poloniex.com') as websocket:
             for symbol in symbols:
-                print("subscribe to %s" % self.market_id(symbol))
                 await websocket.send(json.dumps({'command': 'subscribe', 'channel': self.market_id(symbol)}))  # BTC_ETH
             orderbooks = {}
             while True:
@@ -38,7 +37,7 @@ class poloniex(ccxt.poloniex):
                         market = self.get_market_by_poloniex_id(message[0])
                         if row[0] == 'i':
                             orderbooks[market] = {'asks': row[1]['orderBook'][0],
-                                                      'bids': row[1]['orderBook'][1]}
+                                                  'bids': row[1]['orderBook'][1]}
                         if row[0] == 'o':
                             if row[3] == '0.00000000':
                                 if row[1] == 1:
@@ -53,7 +52,10 @@ class poloniex(ccxt.poloniex):
                                     orderbooks[market]['bids'][row[2]] = row[3]
                                 else:
                                     orderbooks[market]['asks'][row[2]] = row[3]
-                    yield ['poloniex', orderbooks, market]
+                    yield ['poloniex', {'asks': list(sorted(orderbooks[market]['asks'].items())),
+                                        'bids': list(sorted(orderbooks[market]['bids'].items(), reverse=True))
+                                        },
+                           market]
 
 
 def print_orders(pair, orderbooks):

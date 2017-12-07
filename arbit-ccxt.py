@@ -81,11 +81,8 @@ async def poloniex_wallet_disabled(self, currency):
     if poloniex_currencies == None: poloniex_currencies = await self.publicGetReturnCurrencies()
     return poloniex_currencies[currency]['disabled'] == 1
 
-if config['check_wallets']: ccxt.poloniex.wallet_disabled = poloniex_wallet_disabled
+# if config['check_wallets']: ccxt.poloniex.wallet_disabled = poloniex_wallet_disabled
 
-sio = socketio.AsyncServer()
-app = web.Application()
-sio.attach(app)
 
 def debug(message):
     # print(message)
@@ -438,8 +435,11 @@ async def calculate_arbitrage2(pair):
                 'lowestAskExchange': lowestAskPair[pair][1],
                 'highestBidExchange': highestBidPair[pair][1],
             }
-            updated_time = min(exchange_pair_updated[pair][lowestAskPair[pair][1]],
-                exchange_pair_updated[pair][highestBidPair[pair][1]])
+            try:
+                updated_time = min(exchange_pair_updated[pair][lowestAskPair[pair][1]],
+                    exchange_pair_updated[pair][highestBidPair[pair][1]])
+            except:
+                import pdb; pdb.set_trace()
             if pair not in arbitrage_stats or arbitrage_stats[pair]['arbitrage'] != last_arbitrage:
                 if spread_percent > 1:
                     if pair not in arbitrage_stats or any_exchange_changed(last_arbitrage, arbitrage_stats[pair]['arbitrage']):
@@ -517,8 +517,8 @@ def calculate_price_by_volume(currency, orderbook):
     prices = []
     total_volume = 0
     for order in orderbook:
-        prices.append(order[0])
-        total_volume += order[1]
+        prices.append(float(order[0]))
+        total_volume += (float(order[0]) * float(order[1]))
         if total_volume >= config['minimal_volume'][currency]: break
     else:
         logger.debug("total volume %s instead of %s needed for %s orders" % (total_volume, config['minimal_volume'][currency], len(prices)))
@@ -553,19 +553,46 @@ async def main(exchange, markets):
         if len(orderbook) > 0 and (not (len(orderbook['asks']) == 0 or len(orderbook['bids']) == 0)):
             lowestAsk = calculate_price_by_volume(pair.split('/')[1], orderbook['asks'])
             highestBid = calculate_price_by_volume(pair.split('/')[1], orderbook['bids'])
-            BASpread = (orderbook['asks'][0][0] - orderbook['bids'][0][0]) / (orderbook['asks'][0][0] / 100)
+            BASpread = (float(orderbook['asks'][0][0]) - float(orderbook['bids'][0][0])) / (float(orderbook['asks'][0][0]) / 100)
             await asyncio.ensure_future(calculate_arbitrage(pair, exchange_id, lowestAsk, highestBid, BASpread))
 
 # try:
 import interfaces
 from functools import partial
 
-async def main_websocket(exchange, markets):
-    async for (exchange_id, orderbooks, updated_pair) in getattr(interfaces, exchange).run(markets):
-        print("got data from %s with updated %s" % (exchange_id, updated_pair))
 
-loop.run_until_complete(asyncio.gather(*([main_websocket(exchange, markets) for exchange, markets in coins_by_exchange.items()])))
-#loop.run_until_complete(asyncio.ensure_future(web.run_app(app)))
+async def main_websocket(exchange, markets):
+    global exchange_pair_updated
+    ex = getattr(interfaces, exchange)()
+    async for (exchange_id, orderbook, updated_pair) in ex.websocket_run(coins_by_exchange[exchange]):
+        if updated_pair not in exchange_pair_updated:
+            exchange_pair_updated[updated_pair] = {exchange: time()}
+        else:
+            exchange_pair_updated[updated_pair][exchange] = time()
+
+        if updated_pair.split('/')[1] not in config['minimal_volume'].keys(): continue
+        if len(orderbook) > 0 and (not (len(orderbook['asks']) == 0 or len(orderbook['bids']) == 0)):
+            lowestAsk = calculate_price_by_volume(updated_pair.split('/')[1], orderbook['asks'])
+            highestBid = calculate_price_by_volume(updated_pair.split('/')[1], orderbook['bids'])
+            BASpread = (float(orderbook['asks'][0][0]) - float(orderbook['bids'][0][0])) / (float(orderbook['asks'][0][0]) / 100)
+            await asyncio.ensure_future(calculate_arbitrage(updated_pair, exchange_id, lowestAsk, highestBid, BASpread))
+
+async def background_task():
+    asyncio.gather(*([asyncio.ensure_future(main_websocket(exchange, coins_by_exchange[exchange])) for exchange in ['poloniex', 'hitbtc']]))
+    #for exchange in ['poloniex', 'hitbtc']:
+        #await main_websocket(exchange, coins_by_exchange[exchange])
+
+sio = socketio.AsyncServer()
+app = web.Application()
+sio.attach(app)
+sio.start_background_task(background_task)
+web.run_app(app)
+
+#loop.run_until_complete(run_web_app())
+#loop.run_until_complete()
+#
+# loop.run_until_complete(asyncio.gather(*([main_websocket(exchange, markets) for exchange, markets in coins_by_exchange.items()])))
+#
 #loop.run_until_complete(asyncio.gather(*([asyncio.ensure_future(main(exchange, markets)) \
 #                        for exchange, markets in coins_by_exchange.items()]+[])))
 
