@@ -43,7 +43,7 @@ import logging
 # TODO: add bitshares dex
 #exchange_ids = ['poloniex', 'hitbtc2', 'bittrex', 'exmo', 'liqui', 'binance']
 # exchange_ids = ['bitfinex', 'poloniex', 'hitbtc2', 'bittrex']
-exchange_ids = ['bittrex', 'poloniex', 'hitbtc']
+exchange_ids = ['poloniex', 'hitbtc']
 exchanges = {}
 coins = {}
 cheapest_ask = {}
@@ -269,8 +269,6 @@ spreads_by_pairs = {}
 last_update_send = 0
 
 async def send_update(pair):
-    global last_update_send;
-    if time() - last_update_send < 10: return
     if pair not in arbitrage_stats:
         # kind of dropping arbitrage
         spreads_by_pairs[pair] = {
@@ -422,95 +420,106 @@ def any_exchange_changed(last_arbitrage, previous_arbitrage):
            last_arbitrage['highestBidExchange'] != previous_arbitrage['highestBidExchange']
 
 async def calculate_arbitrage2(pair):
-    if pair in lowestAskPair and pair in highestBidPair and lowestAskPair[pair][1] != highestBidPair[pair][1]:
-        spread = highestBidPair[pair][0] - lowestAskPair[pair][0]
-        spread_percent = spread / (lowestAskPair[pair][0] / 100)
-        wallet_disabled = await asyncio.ensure_future(check_wallets(pair, [lowestAskPair[pair][1],highestBidPair[pair][1]]))
-        if not wallet_disabled:
-            last_arbitrage = {
-                'spread': spread,
-                'spread_percent': spread_percent,
-                'lowestAskPrice': lowestAskPair[pair][0],
-                'highestBidPrice': highestBidPair[pair][0],
-                'lowestAskExchange': lowestAskPair[pair][1],
-                'highestBidExchange': highestBidPair[pair][1],
-            }
-            try:
+    try:
+        if pair in lowestAskPair and pair in highestBidPair and lowestAskPair[pair][1] != highestBidPair[pair][1]:
+            spread = highestBidPair[pair][0] - lowestAskPair[pair][0]
+            spread_percent = spread / (lowestAskPair[pair][0] / 100)
+            wallet_disabled = False #await asyncio.ensure_future(check_wallets(pair, [lowestAskPair[pair][1],highestBidPair[pair][1]]))
+            if not wallet_disabled:
+                last_arbitrage = {
+                    'spread': spread,
+                    'spread_percent': spread_percent,
+                    'lowestAskPrice': lowestAskPair[pair][0],
+                    'highestBidPrice': highestBidPair[pair][0],
+                    'lowestAskExchange': lowestAskPair[pair][1],
+                    'highestBidExchange': highestBidPair[pair][1],
+                }
                 updated_time = min(exchange_pair_updated[pair][lowestAskPair[pair][1]],
                     exchange_pair_updated[pair][highestBidPair[pair][1]])
-            except:
-                import pdb; pdb.set_trace()
-            if pair not in arbitrage_stats or arbitrage_stats[pair]['arbitrage'] != last_arbitrage:
-                if spread_percent > 1:
-                    if pair not in arbitrage_stats or any_exchange_changed(last_arbitrage, arbitrage_stats[pair]['arbitrage']):
-                        if pair in arbitrage_stats and any_exchange_changed(last_arbitrage, arbitrage_stats[pair]['arbitrage']):
-                            save_liquidated_arbitrage()
-                        logger.info("found new arbitrage: ")
-                        arbitrage_stats[pair] = {
-                            'time': updated_time,
-                            'time_found': time(),
-                            'arbitrage': last_arbitrage,
-                            'lowestBASpread': lowestAskPair[pair][2],
-                            'highestBASpread': highestBidPair[pair][2]
-                        }
+                if pair not in arbitrage_stats or arbitrage_stats[pair]['arbitrage'] != last_arbitrage:
+                    if spread_percent > 1:
+                        if pair not in arbitrage_stats or any_exchange_changed(last_arbitrage, arbitrage_stats[pair]['arbitrage']):
+                            if pair in arbitrage_stats and any_exchange_changed(last_arbitrage, arbitrage_stats[pair]['arbitrage']):
+                                save_liquidated_arbitrage()
+                            logger.info("found new arbitrage: ")
+                            arbitrage_stats[pair] = {
+                                'time': updated_time,
+                                'time_found': time(),
+                                'arbitrage': last_arbitrage,
+                                'lowestBASpread': lowestAskPair[pair][2],
+                                'highestBASpread': highestBidPair[pair][2]
+                            }
 
-                    elif arbitrage_stats[pair]['arbitrage'] != last_arbitrage:
-                        logger.info("found updated arbitrage: ")
-                        # TODO: if the same exchanges - do not update time found
-                        # NEXT: if same exchanges but spread became lesser - update time found
-                        # or became less just for 5% - do not update, more - update
-                        # became bigger - not update
-                        # arbitrage_stats[pair] = {
-                        #     'time': updated_time,
-                        #     'time_found': time(),
-                        #     'arbitrage': last_arbitrage,
-                        #     'lowestBASpread': lowestAskPair[pair][2],
-                        #     'highestBASpread': highestBidPair[pair][2]
-                        # }
-                        # do not touch time found
-                        arbitrage_stats[pair]['time'] = updated_time
-                        arbitrage_stats[pair]['arbitrage'] = last_arbitrage
-                        arbitrage_stats[pair]['lowestBASpread'] = lowestAskPair[pair][2]
-                        arbitrage_stats[pair]['highestBASpread'] = highestBidPair[pair][2]
+                        elif arbitrage_stats[pair]['arbitrage'] != last_arbitrage:
+                            logger.info("found updated arbitrage: ")
+                            # TODO: if the same exchanges - do not update time found
+                            # NEXT: if same exchanges but spread became lesser - update time found
+                            # or became less just for 5% - do not update, more - update
+                            # became bigger - not update
+                            # arbitrage_stats[pair] = {
+                            #     'time': updated_time,
+                            #     'time_found': time(),
+                            #     'arbitrage': last_arbitrage,
+                            #     'lowestBASpread': lowestAskPair[pair][2],
+                            #     'highestBASpread': highestBidPair[pair][2]
+                            # }
+                            # do not touch time found
+                            arbitrage_stats[pair]['time'] = updated_time
+                            arbitrage_stats[pair]['arbitrage'] = last_arbitrage
+                            arbitrage_stats[pair]['lowestBASpread'] = lowestAskPair[pair][2]
+                            arbitrage_stats[pair]['highestBASpread'] = highestBidPair[pair][2]
 
-                    # show dropped dropped arbitrage (become < 1%)
-                    logger.info("pair %s spread %.8f (%.3f%%) exchanges: %s/%s" % (pair,
-                          last_arbitrage['spread'], last_arbitrage['spread_percent'],
-                          last_arbitrage['lowestAskExchange'], last_arbitrage['highestBidExchange']))
-                    logger.info("buy for %.8f at %s, sell for %.8f at %s" %
-                          (last_arbitrage['lowestAskPrice'], last_arbitrage['lowestAskExchange'],
-                           last_arbitrage['highestBidPrice'], last_arbitrage['highestBidExchange']))
-                    await send_update(pair)
+                        # show dropped dropped arbitrage (become < 1%)
+                        logger.info("pair %s spread %.8f (%.3f%%) exchanges: %s/%s" % (pair,
+                              last_arbitrage['spread'], last_arbitrage['spread_percent'],
+                              last_arbitrage['lowestAskExchange'], last_arbitrage['highestBidExchange']))
+                        logger.info("buy for %.8f at %s, sell for %.8f at %s" %
+                              (last_arbitrage['lowestAskPrice'], last_arbitrage['lowestAskExchange'],
+                               last_arbitrage['highestBidPrice'], last_arbitrage['highestBidExchange']))
+                        await send_update(pair)
+                    elif pair in arbitrage_stats:
+                        logger.info("arbitrage liquidated:")
+                        logger.info("pair %s spread %.8f (%.3f%%) exchanges: %s/%s" % (pair,
+                              last_arbitrage['spread'], last_arbitrage['spread_percent'],
+                              last_arbitrage['lowestAskExchange'], last_arbitrage['highestBidExchange']))
+                        logger.info("was alive %.1f seconds" % (time() - arbitrage_stats[pair]['time']))
+                        # TODO: save arbitrage history (influxdb) before drop
+                        # TODO: what to do with arbitrage changes??? (save min-max values)
+                        # and display it then as 1.23-1.45%
+                        del(arbitrage_stats[pair])
+                        await send_update(pair)
                 elif pair in arbitrage_stats:
-                    logger.info("arbitrage liquidated:")
-                    logger.info("pair %s spread %.8f (%.3f%%) exchanges: %s/%s" % (pair,
-                          last_arbitrage['spread'], last_arbitrage['spread_percent'],
-                          last_arbitrage['lowestAskExchange'], last_arbitrage['highestBidExchange']))
-                    logger.info("was alive %.1f seconds" % (time() - arbitrage_stats[pair]['time']))
-                    # TODO: save arbitrage history (influxdb) before drop
-                    # TODO: what to do with arbitrage changes??? (save min-max values)
-                    # and display it then as 1.23-1.45%
-                    del(arbitrage_stats[pair])
+                    # arbitrage not changed
+                    arbitrage_stats[pair]['time'] = updated_time
                     await send_update(pair)
-            elif pair in arbitrage_stats:
-                # arbitrage not changed
-                arbitrage_stats[pair]['time'] = updated_time
-                await send_update(pair)
+    except Exception as err:
+        print("!!!! EXCEPTION: %s" % err)
 async def getLowest(pair, exchange_id, lowestAsk, highestBid, BASpread):
-    if (not pair in lowestAskPair) or lowestAskPair[pair][0] > lowestAsk or \
-        pair in lowestAskPair and lowestAskPair[pair][1] == exchange_id and lowestAskPair[pair][0] < lowestAsk:
-        lowestAskPair[pair] = [lowestAsk, exchange_id, BASpread]
-        await calculate_arbitrage2(pair)
+    try:
+        if (not pair in lowestAskPair) or lowestAskPair[pair][0] > lowestAsk or \
+            pair in lowestAskPair and lowestAskPair[pair][1] == exchange_id and lowestAskPair[pair][0] < lowestAsk:
+            lowestAskPair[pair] = [lowestAsk, exchange_id, BASpread]
+            await calculate_arbitrage2(pair)
+    except Exception as err:
+        print("error!!!: %s" % err)
 
 async def getHighest(pair, exchange_id, lowestAsk, highestBid, BASpread):
-    if (not pair in highestBidPair) or highestBidPair[pair][0] < highestBid or \
-        pair in highestBidPair and highestBidPair[pair][1] == exchange_id and highestBidPair[pair][0] > highestBid:
-        highestBidPair[pair] = [highestBid, exchange_id, BASpread]
-        await calculate_arbitrage2(pair)
+    try:
+        if (not pair in highestBidPair) or highestBidPair[pair][0] < highestBid or \
+            pair in highestBidPair and highestBidPair[pair][1] == exchange_id and highestBidPair[pair][0] > highestBid:
+            highestBidPair[pair] = [highestBid, exchange_id, BASpread]
+            await calculate_arbitrage2(pair)
+    except Exception as err:
+        print("error!!!: %s" % err)
+
 
 async def calculate_arbitrage(pair, exchange_id, lowestAsk, highestBid, BASpread):
-    await asyncio.gather(*[getLowest(pair, exchange_id, lowestAsk, highestBid, BASpread),
-                          getHighest(pair, exchange_id, lowestAsk, highestBid, BASpread)])
+    #print("calculate for %s exch %s" % (pair, exchange_id))
+    try:
+        await asyncio.gather(*[getLowest(pair, exchange_id, lowestAsk, highestBid, BASpread),
+                              getHighest(pair, exchange_id, lowestAsk, highestBid, BASpread)])
+    except Exception as err:
+        print("ERR!!! %s" % err)
         # calculate possible arbitrage and send update if changed
 
 def calculate_price_by_volume(currency, orderbook):
@@ -522,7 +531,6 @@ def calculate_price_by_volume(currency, orderbook):
         if total_volume >= config['minimal_volume'][currency]: break
     else:
         logger.debug("total volume %s instead of %s needed for %s orders" % (total_volume, config['minimal_volume'][currency], len(prices)))
-
     return sum(prices)/len(prices)
 
 # check if wallet deposit is disabled on exchange
@@ -545,37 +553,32 @@ async def check_wallets(pair, wallet_exchanges):
                 logger.debug("false")
     return False
 
-async def main(exchange, markets):
-    async for (exchange_id, pair, orderbook) in get_orders(exchange, markets):
-        logger.debug("got data from %s" % exchange_id)
-        # skip not defined currency volumes
-        if pair.split('/')[1] not in config['minimal_volume'].keys(): continue
-        if len(orderbook) > 0 and (not (len(orderbook['asks']) == 0 or len(orderbook['bids']) == 0)):
-            lowestAsk = calculate_price_by_volume(pair.split('/')[1], orderbook['asks'])
-            highestBid = calculate_price_by_volume(pair.split('/')[1], orderbook['bids'])
-            BASpread = (float(orderbook['asks'][0][0]) - float(orderbook['bids'][0][0])) / (float(orderbook['asks'][0][0]) / 100)
-            await asyncio.ensure_future(calculate_arbitrage(pair, exchange_id, lowestAsk, highestBid, BASpread))
-
 # try:
 import interfaces
-from functools import partial
-
 
 async def main_websocket(exchange, markets):
     global exchange_pair_updated
-    ex = getattr(interfaces, exchange)()
-    async for (exchange_id, orderbook, updated_pair) in ex.websocket_run(coins_by_exchange[exchange]):
-        if updated_pair not in exchange_pair_updated:
-            exchange_pair_updated[updated_pair] = {exchange: time()}
-        else:
-            exchange_pair_updated[updated_pair][exchange] = time()
-
-        if updated_pair.split('/')[1] not in config['minimal_volume'].keys(): continue
-        if len(orderbook) > 0 and (not (len(orderbook['asks']) == 0 or len(orderbook['bids']) == 0)):
-            lowestAsk = calculate_price_by_volume(updated_pair.split('/')[1], orderbook['asks'])
-            highestBid = calculate_price_by_volume(updated_pair.split('/')[1], orderbook['bids'])
-            BASpread = (float(orderbook['asks'][0][0]) - float(orderbook['bids'][0][0])) / (float(orderbook['asks'][0][0]) / 100)
-            await asyncio.ensure_future(calculate_arbitrage(updated_pair, exchange_id, lowestAsk, highestBid, BASpread))
+    try:
+        ex = getattr(interfaces, exchange)()
+        async for (exchange_id, orderbook, updated_pair) in ex.websocket_run(coins_by_exchange[exchange]):
+            if updated_pair not in exchange_pair_updated:
+                exchange_pair_updated[updated_pair] = {exchange: time()}
+            else:
+                exchange_pair_updated[updated_pair][exchange] = time()
+            #if exchange_id == 'hitbtc':
+            #print("got %s from %s" % (updated_pair, exchange_id))
+            if updated_pair.split('/')[1] not in config['minimal_volume'].keys(): continue
+            if len(orderbook) > 0 and (not (len(orderbook['asks']) == 0 or len(orderbook['bids']) == 0)):
+                #print("got %s from %s" % (updated_pair, exchange_id))
+                lowestAsk = calculate_price_by_volume(updated_pair.split('/')[1], orderbook['asks'])
+                highestBid = calculate_price_by_volume(updated_pair.split('/')[1], orderbook['bids'])
+                # if updated_pair == 'ZEC/BTC' and exchange == 'hitbtc':
+                #     print("got pair %s from %s, lowestAsk: %s, highestBid: %s" %(updated_pair, exchange, lowestAsk, highestBid))
+                #     print("orderbook: %s" % orderbook)
+                BASpread = (float(orderbook['asks'][0][0]) - float(orderbook['bids'][0][0])) / (float(orderbook['asks'][0][0]) / 100)
+                await calculate_arbitrage(updated_pair, exchange_id, lowestAsk, highestBid, BASpread)
+    except Exception as err:
+        print("Error!!! %s" % err)
 
 async def background_task():
     asyncio.gather(*([asyncio.ensure_future(main_websocket(exchange, coins_by_exchange[exchange])) for exchange in ['poloniex', 'hitbtc']]))

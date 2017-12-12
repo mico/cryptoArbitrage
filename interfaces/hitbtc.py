@@ -21,7 +21,6 @@ class hitbtc(ccxt.hitbtc2):
                 # print("message: %s" % message)
                 # if not message['result']:
                 #     raise Exception('subscription error: %s' % message)
-            print("done.")
             while True:
                 try:
                     message = await websocket.recv()
@@ -32,8 +31,8 @@ class hitbtc(ccxt.hitbtc2):
                             pair = self.markets_by_id[message['params']['symbol']]['symbol']
                             if pair not in orderbooks and pair in symbols:  # fill only if not exists already
                                 orderbooks[pair] = {
-                                    'bids': dict([[row['price'], float(row['size'])/1000] for row in message['params']['bid']]),
-                                    'asks': dict([[row['price'], float(row['size'])/1000] for row in message['params']['ask']])
+                                    'bids': dict([[row['price'], float(row['size'])] for row in message['params']['bid']]),
+                                    'asks': dict([[row['price'], float(row['size'])] for row in message['params']['ask']])
                                 }
                         elif message['method'] == 'updateOrderbook':
                             #print("got update: %s after %s seconds " % (message['params']['symbol'], time() - start_at))
@@ -42,12 +41,12 @@ class hitbtc(ccxt.hitbtc2):
                                 # print("got updates for %s" % (pair))
                                 for row in message['params']['ask']:
                                     if float(row['size']) > 0:
-                                        orderbooks[pair]['asks'][row['price']] = float(row['size'])/1000
+                                        orderbooks[pair]['asks'][row['price']] = float(row['size'])
                                     else:
                                         del(orderbooks[pair]['asks'][row['price']])
                                 for row in message['params']['bid']:
                                     if float(row['size']) > 0:
-                                        orderbooks[pair]['bids'][row['price']] = float(row['size'])/1000
+                                        orderbooks[pair]['bids'][row['price']] = float(row['size'])
                                     else:
                                         del(orderbooks[pair]['bids'][row['price']])
                                 yield ['hitbtc', {'asks': list(sorted(orderbooks[pair]['asks'].items())),
