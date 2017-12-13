@@ -1,6 +1,9 @@
 from requests import Session  # pip install requests
 from signalr import Connection  # pip install signalr-client
 import asyncio
+import janus
+import ccxt.async as ccxt
+
 # import sys
 # sys.path.append('python-bittrex-websocket')
 #
@@ -116,29 +119,76 @@ def print_error(error):
     print('error: ', error)
 
 
-def main():
-    with Session() as session:
-        connection = Connection("https://www.bittrex.com/signalR/", session)
-        chat = connection.register_hub('corehub')
-        connection.received += handle_received
-        connection.error += print_error
-        connection.start()
+class bittrex(ccxt.bittrex):
+    def signalr_connected(self, *args, **kwargs):
+        if 'R' in kwargs and type(kwargs['R']) is not bool:
+            # kwargs['R'] contains your snapshot
+            # import pdb; pdb.set_trace()
+            #print(kwargs['R'])
+            #print("connection counter: %s" % kwargs['I']) # !!!
+            market = market_connection_ids[int(kwargs['I'])]
+            orderbooks[market] = {
+                'bids': dict([[row['Rate'], row['Quantity']] for row in kwargs['R']['Buys']]),
+                'asks': dict([[row['Rate'], row['Quantity']] for row in kwargs['R']['Sells']])
+            }
+            self.queue.put(market)
 
-        # You missed this part
-        chat.client.on('updateExchangeState', msg_received)
+    def signalr_message(self, *args, **kwargs):
+        # import pdb; pdb.set_trace()
+        market = self.markets_by_id[args[0]['MarketName']]['symbol']
+        if market in orderbooks:
+            if len(args) > 1:
+                raise Exception("args more then 1")
+            for row in args[0]['Buys']:
+                if row['Type'] in [0, 2]: # 0 - remove, 2 - sold/bought I think
+                    orderbooks[market]['bids'][row['Rate']] = row['Quantity']
+                else:
+                    try:
+                        del(orderbooks[market]['bids'][row['Rate']])
+                    except:
+                        pass
+            for row in args[0]['Sells']:
+                if row['Type'] in [0, 2]:
+                    orderbooks[market]['asks'][row['Rate']] = row['Quantity']
+                else:
+                    try:
+                        del(orderbooks[market]['asks'][row['Rate']])
+                    except:
+                        pass
+            self.queue.put(market)
 
-        for market in ["BTC-ADA", "BTC-NEO"]:
-            chat.server.invoke('SubscribeToExchangeDeltas', market)
-            chat.server.invoke('QueryExchangeState', market)
-            market_connection_ids[connection.get_send_counter()] = market
-            print("I for %s: %s" % (market, connection.get_send_counter()))
-            # SubscribeToSummaryDeltas ?
+    def signalr_connect(self, symbols, queue):
+        self.queue = queue
+        with Session() as session:
+            connection = Connection("https://www.bittrex.com/signalR/", session)
+            chat = connection.register_hub('corehub')
+            connection.received += self.signalr_connected
+            connection.error += print_error
+            connection.start()
 
-        # Value of 1 will not work, you will get disconnected
-        connection.wait(120000)
+            chat.client.on('updateExchangeState', self.signalr_message)
 
-#main()
+            for symbol in symbols:
+                chat.server.invoke('SubscribeToExchangeDeltas', self.market_id(symbol))
+                chat.server.invoke('QueryExchangeState', self.market_id(symbol))
+                market_connection_ids[connection.get_send_counter()] = symbol
+                # print("I for %s: %s" % (symbol, connection.get_send_counter()))
+                # SubscribeToSummaryDeltas ?
 
-async def run(callback):
-    asyncio.sleep(1)
-    yield ['bittrex', [], 'none']
+            # Value of 1 will not work, you will get disconnected
+            connection.wait(120000)
+
+    async def websocket_run(self, symbols):
+        await self.load_markets()
+
+        loop = asyncio.get_event_loop()
+        queue = janus.Queue(loop=loop)
+        # import pdb; pdb.set_trace()
+        # pool = ThreadPoolExecutor(max_workers=multiprocessing.cpu_count())
+        # loop = asyncio.get_event_loop()
+        loop.run_in_executor(None, self.signalr_connect, symbols, queue.sync_q)
+        while True:
+            market = await queue.async_q.get()
+            yield ['bittrex', {'asks': list(sorted(orderbooks[market]['asks'].items())),
+                               'bids': list(sorted(orderbooks[market]['bids'].items(), reverse=True))
+                               }, market]

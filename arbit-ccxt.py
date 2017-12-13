@@ -15,6 +15,8 @@ import pdb, traceback, code
 import pickle
 import aiohttp.client_exceptions
 import logging
+import copy
+import traceback
 
 # make debug log
 
@@ -43,7 +45,7 @@ import logging
 # TODO: add bitshares dex
 #exchange_ids = ['poloniex', 'hitbtc2', 'bittrex', 'exmo', 'liqui', 'binance']
 # exchange_ids = ['bitfinex', 'poloniex', 'hitbtc2', 'bittrex']
-exchange_ids = ['poloniex', 'hitbtc']
+exchange_ids = ['poloniex', 'hitbtc', 'bittrex']
 exchanges = {}
 coins = {}
 cheapest_ask = {}
@@ -393,10 +395,12 @@ async def calculate_arbitrage2(pair):
                         # and display it then as 1.23-1.45%
                         arbitrage_stats[pair]['finished'] = time()
                         arbitrage_stats[pair]['pair'] = pair
-                        arbitrage_history += arbitrage_stats[pair]
-                        if len(arbitrage_history) > 100:
-                            arbitrage_history = arbitrage_history[-100:]
-                        await send_arbitrage_history(arbitrage_stats[pair])
+                        # save to history only if more than 50 seconds
+                        if (time() - arbitrage_stats[pair]['time_found']) > 50:
+                            arbitrage_history += [arbitrage_stats[pair]]
+                            if len(arbitrage_history) > 100:
+                                arbitrage_history = arbitrage_history[-100:]
+                            await send_arbitrage_history(arbitrage_stats[pair])
                         del(arbitrage_stats[pair])
                         await send_update(pair)
                 elif pair in arbitrage_stats:
@@ -469,31 +473,35 @@ import interfaces
 
 async def main_websocket(exchange, markets):
     global exchange_pair_updated, last_exchange_update
-    try:
-        ex = getattr(interfaces, exchange)()
-        async for (exchange_id, orderbook, updated_pair) in ex.websocket_run(coins_by_exchange[exchange]):
-            if updated_pair not in exchange_pair_updated:
-                exchange_pair_updated[updated_pair] = {exchange: time()}
-            else:
-                exchange_pair_updated[updated_pair][exchange] = time()
-            last_exchange_update[exchange] = time()
-            #if exchange_id == 'hitbtc':
-            # print("got %s from %s" % (updated_pair, exchange_id))
-            if updated_pair.split('/')[1] not in config['minimal_volume'].keys(): continue
-            if len(orderbook) > 0 and (not (len(orderbook['asks']) == 0 or len(orderbook['bids']) == 0)):
-                #print("got %s from %s" % (updated_pair, exchange_id))
-                lowestAsk = calculate_price_by_volume(updated_pair.split('/')[1], orderbook['asks'])
-                highestBid = calculate_price_by_volume(updated_pair.split('/')[1], orderbook['bids'])
-                # if updated_pair == 'ZEC/BTC' and exchange == 'hitbtc':
-                #     print("got pair %s from %s, lowestAsk: %s, highestBid: %s" %(updated_pair, exchange, lowestAsk, highestBid))
-                #     print("orderbook: %s" % orderbook)
-                BASpread = (float(orderbook['asks'][0][0]) - float(orderbook['bids'][0][0])) / (float(orderbook['asks'][0][0]) / 100)
-                await calculate_arbitrage(updated_pair, exchange_id, lowestAsk, highestBid, BASpread)
-    except Exception as err:
-        print("Error!!! %s" % err)
+    while True:
+        try:
+            ex = getattr(interfaces, exchange)()
+            async for (exchange_id, orderbook, updated_pair) in ex.websocket_run(coins_by_exchange[exchange]):
+                if updated_pair not in exchange_pair_updated:
+                    exchange_pair_updated[updated_pair] = {exchange: time()}
+                else:
+                    exchange_pair_updated[updated_pair][exchange] = time()
+                last_exchange_update[exchange] = time()
+                #if exchange_id == 'hitbtc':
+                # print("got %s from %s" % (updated_pair, exchange_id))
+                if updated_pair.split('/')[1] not in config['minimal_volume'].keys(): continue
+                if len(orderbook) > 0 and (not (len(orderbook['asks']) == 0 or len(orderbook['bids']) == 0)):
+                    #print("got %s from %s" % (updated_pair, exchange_id))
+                    lowestAsk = calculate_price_by_volume(updated_pair.split('/')[1], orderbook['asks'])
+                    highestBid = calculate_price_by_volume(updated_pair.split('/')[1], orderbook['bids'])
+                    # if updated_pair == 'ZEC/BTC' and exchange == 'hitbtc':
+                    #     print("got pair %s from %s, lowestAsk: %s, highestBid: %s" %(updated_pair, exchange, lowestAsk, highestBid))
+                    #     print("orderbook: %s" % orderbook)
+                    BASpread = (float(orderbook['asks'][0][0]) - float(orderbook['bids'][0][0])) / (float(orderbook['asks'][0][0]) / 100)
+                    await calculate_arbitrage(updated_pair, exchange_id, lowestAsk, highestBid, BASpread)
+        except Exception as err:
+            print("Error!!! %s" % err)
+            traceback.print_exc()
+            #raise
+            #await asyncio.sleep(1)
 
 async def background_task():
-    asyncio.gather(*([asyncio.ensure_future(main_websocket(exchange, coins_by_exchange[exchange])) for exchange in ['poloniex', 'hitbtc']]))
+    asyncio.gather(*([asyncio.ensure_future(main_websocket(exchange, markets)) for exchange, markets in coins_by_exchange.items()]))
     asyncio.gather(asyncio.ensure_future(send_status_update()))
     #for exchange in ['poloniex', 'hitbtc']:
         #await main_websocket(exchange, coins_by_exchange[exchange])
