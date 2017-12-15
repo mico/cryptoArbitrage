@@ -1,11 +1,15 @@
 from requests import Session  # pip install requests
-from signalr import Connection  # pip install signalr-client
+#from signalr.transports._ws_transport import WebSocketsTransport
+#from signalr.transports._auto_transport import AutoTransport
 import asyncio
 import janus
 import ccxt.async as ccxt
+import gevent
+import sys
 
 # import sys
-# sys.path.append('python-bittrex-websocket')
+sys.path.insert(0, 'signalr-client-py')
+from signalr import Connection
 #
 # import bittrex_websocket
 # from time import sleep
@@ -59,6 +63,7 @@ orderbooks = {}
 class Connection(Connection):
     def get_send_counter(self):
         return self.__send_counter
+
 
 def handle_received(*args, **kwargs):
     # Orderbook snapshot:
@@ -157,26 +162,26 @@ class bittrex(ccxt.bittrex):
                         pass
             self.queue.put(market)
 
-    def signalr_connect(self, symbols, queue):
+    async def signalr_connect(self, symbols, queue):
         self.queue = queue
         with Session() as session:
             connection = Connection("https://www.bittrex.com/signalR/", session)
             chat = connection.register_hub('corehub')
             connection.received += self.signalr_connected
             connection.error += print_error
-            connection.start()
+            await connection.start()
 
             chat.client.on('updateExchangeState', self.signalr_message)
 
             for symbol in symbols:
-                chat.server.invoke('SubscribeToExchangeDeltas', self.market_id(symbol))
-                chat.server.invoke('QueryExchangeState', self.market_id(symbol))
+                await chat.server.invoke('SubscribeToExchangeDeltas', self.market_id(symbol))
+                await chat.server.invoke('QueryExchangeState', self.market_id(symbol))
                 market_connection_ids[connection.get_send_counter()] = symbol
                 # print("I for %s: %s" % (symbol, connection.get_send_counter()))
                 # SubscribeToSummaryDeltas ?
 
             # Value of 1 will not work, you will get disconnected
-            connection.wait(120000)
+            # connection.wait(None)
 
     async def websocket_run(self, symbols):
         await self.load_markets()
@@ -186,9 +191,11 @@ class bittrex(ccxt.bittrex):
         # import pdb; pdb.set_trace()
         # pool = ThreadPoolExecutor(max_workers=multiprocessing.cpu_count())
         # loop = asyncio.get_event_loop()
-        loop.run_in_executor(None, self.signalr_connect, symbols, queue.sync_q)
+        asyncio.gather(self.signalr_connect(symbols, queue.sync_q))
+        #loop.run_in_executor(None, self.signalr_connect, symbols, queue.sync_q)
         while True:
             market = await queue.async_q.get()
+
             yield ['bittrex', {'asks': list(sorted(orderbooks[market]['asks'].items())),
                                'bids': list(sorted(orderbooks[market]['bids'].items(), reverse=True))
                                }, market]

@@ -80,7 +80,6 @@ class poloniex(ccxt.poloniex):
 
                     except Exception as err:
                         print("poloniex ERROR!!! %s" % err)
-                        raise Exception(err)
 
 
 def print_orders(pair, orderbooks):

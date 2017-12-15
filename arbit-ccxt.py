@@ -4,7 +4,6 @@ from aiohttp import web
 import socketio
 
 import asyncio
-import os
 import sys
 from time import time
 import yaml
@@ -15,36 +14,8 @@ import pdb, traceback, code
 import pickle
 import aiohttp.client_exceptions
 import logging
-import copy
-import traceback
+import interfaces
 
-# make debug log
-
-# - проверка что кошелек доступен для ввода-вывода
-# для yobit = ex.privatePostGetDepositAddress('EXP')
-# >>> ex.privatePostGetDepositAddress({'coinName': 'EXP'})
-# попробовать withdrawal ошибочный или пустой, который точно не должен сработать (на 0 балансе)
-#ccxt.errors.ExchangeError: yobit {"success":0,"error":"No free addresses for such currency. Please try again in 2 minutes."}
-# недоступный кошелек на poloniex
-# >>> c = ex.publicGetReturnCurrencies()
-# >>> c['XVC']
-# {'id': 253, 'name': 'Vcash', 'txFee': '0.01000000', 'minConf': 1, 'depositAddress': None, 'disabled': 1, 'delisted': 0, 'frozen': 0}
-
-
-# - доступный обьем для покупки / продажи
-# - проценты за покупку-продажу и за перевод
-# - сколько времени он уже доступен (понять успею ли купить-продать), как расчитать что успею продать если буду делать перевод
-# проверка символов, что бы не было таких выдач:
-#pair BTS/BTC spread 0.01749059 (177209.625%) exchanges: poloniex/bittrex
-#buy for 0.00000987 at poloniex, sell for 0.01750046 at bittrex
-# - указывать торговую операцию с обьемом и доход с учетом обьема (в usd)
-
-# exchange_ids = ['poloniex', 'bittrex', 'bitfinex', 'bitstamp', 'cryptopia', 'exmo', 'liqui', 'quoine', 'nova',\
-#                 'hitbtc2','coincheck', 'bleutrade', 'bitmex']
-# TODO: fix bitfinex rate limit
-# TODO: add bitshares dex
-#exchange_ids = ['poloniex', 'hitbtc2', 'bittrex', 'exmo', 'liqui', 'binance']
-# exchange_ids = ['bitfinex', 'poloniex', 'hitbtc2', 'bittrex']
 exchange_ids = ['poloniex', 'hitbtc', 'bittrex']
 exchanges = {}
 coins = {}
@@ -237,9 +208,7 @@ for exchange_id, markets in all_markets:
 new_coins = {}
 
 for pair in coins:
-    #if pair == 'DASH/BTC': new_coins[pair] = coins[pair]
     if len(coins[pair]) > 1 and (pair.split('/')[1] in config['minimal_volume'].keys()): new_coins[pair] = coins[pair]
-    #if len(new_coins) > 10: break
 total_pairs = len(new_coins.keys())
 logger.info("found %s pairs for arbitrage" % total_pairs)
 if total_pairs < 1:
@@ -270,7 +239,7 @@ spreads_by_pairs = {}
 
 last_update_send = 0
 last_exchange_update = {}
-arbitrage_history = [] # arbitrage profit range, high/low exchange, time found, time was exists
+arbitrage_history = []  # arbitrage profit range, high/low exchange, time found, time was exists
 
 async def send_status_update():
     while True:
@@ -307,7 +276,6 @@ async def send_update(pair, room=None):
 
     update_time = int(time())
 
-    last_update_send = time()
     await sio.emit('publicView', {
         'data': [{update_time: {'spreads': {'pairs': spreads_by_pairs}}}]
     }, namespace='/chat', room=room)
@@ -468,9 +436,6 @@ async def check_wallets(pair, wallet_exchanges):
                 logger.debug("false")
     return False
 
-# try:
-import interfaces
-
 async def main_websocket(exchange, markets):
     global exchange_pair_updated, last_exchange_update
     while True:
@@ -482,29 +447,22 @@ async def main_websocket(exchange, markets):
                 else:
                     exchange_pair_updated[updated_pair][exchange] = time()
                 last_exchange_update[exchange] = time()
-                #if exchange_id == 'hitbtc':
                 # print("got %s from %s" % (updated_pair, exchange_id))
                 if updated_pair.split('/')[1] not in config['minimal_volume'].keys(): continue
                 if len(orderbook) > 0 and (not (len(orderbook['asks']) == 0 or len(orderbook['bids']) == 0)):
                     #print("got %s from %s" % (updated_pair, exchange_id))
                     lowestAsk = calculate_price_by_volume(updated_pair.split('/')[1], orderbook['asks'])
                     highestBid = calculate_price_by_volume(updated_pair.split('/')[1], orderbook['bids'])
-                    # if updated_pair == 'ZEC/BTC' and exchange == 'hitbtc':
-                    #     print("got pair %s from %s, lowestAsk: %s, highestBid: %s" %(updated_pair, exchange, lowestAsk, highestBid))
-                    #     print("orderbook: %s" % orderbook)
                     BASpread = (float(orderbook['asks'][0][0]) - float(orderbook['bids'][0][0])) / (float(orderbook['asks'][0][0]) / 100)
                     await calculate_arbitrage(updated_pair, exchange_id, lowestAsk, highestBid, BASpread)
         except Exception as err:
-            print("Error!!! %s" % err)
-            traceback.print_exc()
-            #raise
-            #await asyncio.sleep(1)
+            logger.error(err)
+            logger.error(traceback.print_exc())
+            await asyncio.sleep(1)
 
 async def background_task():
     asyncio.gather(*([asyncio.ensure_future(main_websocket(exchange, markets)) for exchange, markets in coins_by_exchange.items()]))
     asyncio.gather(asyncio.ensure_future(send_status_update()))
-    #for exchange in ['poloniex', 'hitbtc']:
-        #await main_websocket(exchange, coins_by_exchange[exchange])
 
 sio = socketio.AsyncServer()
 app = web.Application()
@@ -518,29 +476,6 @@ async def connect(sid, environ):
         await send_arbitrage_history(data, sid)
 
 sio.start_background_task(background_task)
-web.run_app(app)
+web.run_app(app, port=8081)
 
 # TODO: try OrderedDict
-
-#loop.run_until_complete(run_web_app())
-#loop.run_until_complete()
-#
-# loop.run_until_complete(asyncio.gather(*([main_websocket(exchange, markets) for exchange, markets in coins_by_exchange.items()])))
-#
-#loop.run_until_complete(asyncio.gather(*([asyncio.ensure_future(main(exchange, markets)) \
-#                        for exchange, markets in coins_by_exchange.items()]+[])))
-
-# ?
-# loop.create_task(handle_exception())
-# loop.run_forever()
-# TODO: save spreads on ctrl-c and load when start
-# TODO: show last spreads on connect
-# TODO: show spread living time + updated time (n seconds ago)
-# except:
-#     type, value, tb = sys.exc_info()
-#     traceback.print_exc()
-#     last_frame = lambda tb=tb: last_frame(tb.tb_next) if tb.tb_next else tb
-#     frame = last_frame().tb_frame
-#     ns = dict(frame.f_globals)
-#     ns.update(frame.f_locals)
-#     code.interact(local=ns)
