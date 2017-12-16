@@ -1,15 +1,10 @@
-from requests import Session  # pip install requests
+import sys
+sys.path.insert(0, 'externals/signalr-client-py')
 import asyncio
 import janus
 import ccxt.async as ccxt
-import sys
 import cfscrape
-
-# import sys
-sys.path.insert(0, 'signalr-client-py')
 from signalr import Connection
-
-# or use this!!! https://github.com/aio-libs/janus
 
 # {'MarketName': None, 'Nounce': 18255, 'Buys': [{'Quantity': 6.81746367, 'Rate': 0.04055002}, {'Quantity': 7.42865764, 'Rate': 0.04055001}, {'Quantity': 25.14801556, 'Rate': 0.04055}
 # ({'MarketName': 'BTC-ETH', 'Nounce': 18285, 'Buys': [{'Type': 0, 'Rate': 0.0400334, 'Quantity': 96.1451}, {'Type': 1, 'Rate': 0.04001764, 'Quantity': 0.0}], 'Sells': [], 'Fills': []},)
@@ -63,7 +58,6 @@ class bittrex(ccxt.bittrex):
 
     async def signalr_connect(self, symbols, queue):
         self.queue = queue
-        #session = 
         with cfscrape.create_scraper() as session:
             connection = Connection("https://www.bittrex.com/signalR/", session)
             chat = connection.register_hub('corehub')
@@ -77,11 +71,6 @@ class bittrex(ccxt.bittrex):
                 await chat.server.invoke('SubscribeToExchangeDeltas', self.market_id(symbol))
                 await chat.server.invoke('QueryExchangeState', self.market_id(symbol))
                 market_connection_ids[connection.get_send_counter()] = symbol
-                # print("I for %s: %s" % (symbol, connection.get_send_counter()))
-                # SubscribeToSummaryDeltas ?
-
-            # Value of 1 will not work, you will get disconnected
-            # connection.wait(None)
 
     async def websocket_run(self, symbols):
         await self.load_markets()

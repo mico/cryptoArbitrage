@@ -1,0 +1,4 @@
+[submodule "externals/signalr-client-py"]
+	path = externals/signalr-client-py
+	url = git@github.com:mico/signalr-client-py.git
+	branch = asyncio
