@@ -46,6 +46,7 @@ class Exchange(BaseExchange):
         self.asyncio_loop = self.asyncio_loop or asyncio.get_event_loop()
         self.aiohttp_session = self.aiohttp_session or aiohttp.ClientSession(loop=self.asyncio_loop)
         self.throttle_by_proxy = {}
+        self.throttle_by_proxy_last = {}
         self.init_rest_rate_limiter()
         if 'proxies' in config:
             self.proxies = config['proxies']
@@ -96,6 +97,10 @@ class Exchange(BaseExchange):
                 self.current_proxy_index += 1
                 if self.current_proxy_index > (len(self.proxies)):
                     self.current_proxy_index = 1
+                if (self.current_proxy_index - 1) in self.throttle_by_proxy_last:
+                    #print("last %s was getting %s secs ago" % (path, time() - self.throttle_by_proxy_last[self.current_proxy_index - 1]))
+                    pass
+                self.throttle_by_proxy_last[self.current_proxy_index - 1] = time.time()
                 await self.throttle_by_proxy[self.current_proxy_index - 1]()
             else:
                 await self.throttle()
@@ -122,6 +127,7 @@ class Exchange(BaseExchange):
         try:
             if self.proxies:
                 (proxy_host, proxy_port, user, password) = self.proxies[self.current_proxy_index-1].split(':')
+                #print("using proxy %s:%s for %s" % (proxy_host, proxy_port, url))
                 async with session_method(url, data=encoded_body, headers=headers, timeout=(self.timeout / 1000),
                                           proxy=URL('http://%s:%s@%s:%s' % (user, password, proxy_host, proxy_port))) as response:
                     text = await response.text()

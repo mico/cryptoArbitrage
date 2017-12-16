@@ -10,13 +10,13 @@ import yaml
 from influxdb import InfluxDBClient
 
 import ccxt.async as ccxt # noqa: E402
-import pdb, traceback, code
+import traceback
 import pickle
 import aiohttp.client_exceptions
 import logging
 import interfaces
 
-exchange_ids = ['poloniex', 'hitbtc', 'bittrex']
+exchange_ids = ['poloniex', 'hitbtc2', 'bittrex']
 exchanges = {}
 coins = {}
 cheapest_ask = {}
@@ -46,16 +46,6 @@ if config['use_cached_data']:
         cached_data = pickle.load(file)
     except EOFError:
         cached_data = {}
-
-poloniex_currencies = None
-async def poloniex_wallet_disabled(self, currency):
-    global poloniex_currencies
-    # TODO: cache this query
-    if poloniex_currencies == None: poloniex_currencies = await self.publicGetReturnCurrencies()
-    return poloniex_currencies[currency]['disabled'] == 1
-
-# if config['check_wallets']: ccxt.poloniex.wallet_disabled = poloniex_wallet_disabled
-
 
 def debug(message):
     # print(message)
@@ -93,21 +83,42 @@ async def yobit_wallet_disabled(self, currency):
 # payinEnabled	Boolean	Is allowed for deposit (false for ICO)
 # crypto	Boolean	Is currency belongs to blockchain (false for ICO and fiat, like EUR)
 
+bittrex_currencies = None
+async def bittrex_wallet_disabled(self, currency):
+    # TODO: cache this query
+    global bittrex_currencies
+    for row in bittrex_currencies:
+        if currency == row['Currency']:
+            return row['IsActive'] == False
+    return False
+
+if config['check_wallets']: ccxt.bittrex.wallet_disabled = bittrex_wallet_disabled
+
 hitbtc2_currencies = None
 
 async def hitbtc2_wallet_disabled(self, currency):
     # TODO: cache this query
     global hitbtc2_currencies
-    if hitbtc2_currencies == None: hitbtc2_currencies = await self.publicGetCurrency()
     for row in hitbtc2_currencies:
         if currency == row['id']:
-            return row['payinEnabled'] == False
-    raise(Exception('currency not found'))
+            return row['payinEnabled'] == False or row['payoutEnabled'] == False
+    return False
+    #raise(Exception('currency not found'))
 
 if config['check_wallets']: ccxt.hitbtc2.wallet_disabled = hitbtc2_wallet_disabled
 
 for id in exchange_ids:
     exchanges[id] = getattr(ccxt, id)({**{'timeout': 20000,'enableRateLimit': True}, **(config['exchanges'][id] if id in config['exchanges'] else {})})
+
+if 'poloniex' in exchange_ids:
+    #import pdb; pdb.set_trace()
+    poloniex_currencies = None
+
+    async def poloniex_wallet_disabled(self, currency):
+        global poloniex_currencies
+        return poloniex_currencies[currency]['disabled'] == 1
+
+    if config['check_wallets']: ccxt.poloniex.wallet_disabled = poloniex_wallet_disabled
 
 markets_error = 0
 markets_success = 0
@@ -293,7 +304,7 @@ async def calculate_arbitrage2(pair):
         if pair in lowestAskPair and pair in highestBidPair and lowestAskPair[pair][1] != highestBidPair[pair][1]:
             spread = highestBidPair[pair][0] - lowestAskPair[pair][0]
             spread_percent = spread / (lowestAskPair[pair][0] / 100)
-            wallet_disabled = False #await asyncio.ensure_future(check_wallets(pair, [lowestAskPair[pair][1],highestBidPair[pair][1]]))
+            wallet_disabled = await check_wallets(pair, [lowestAskPair[pair][1],highestBidPair[pair][1]])
             if not wallet_disabled:
                 last_arbitrage = {
                     'spread': spread,
@@ -364,7 +375,9 @@ async def calculate_arbitrage2(pair):
                     arbitrage_stats[pair]['time'] = updated_time
                     await send_update(pair)
     except Exception as err:
-        print("!!!! EXCEPTION: %s" % err)
+        logger.error(err)
+        logger.error(traceback.print_exc())
+
 async def getLowest(pair, exchange_id, lowestAsk, highestBid, BASpread):
     try:
         if (not pair in lowestAskPair) or lowestAskPair[pair][0] > lowestAsk or \
@@ -413,10 +426,8 @@ async def check_wallets(pair, wallet_exchanges):
                 if currency == 'BTC': continue
                 try:
                     logger.debug("checking wallet %s at %s" % (currency, exchange))
-                    # XXX: use another loop
                     if await exchanges[exchange].wallet_disabled(currency):
-                    # if asyncio.get_event_loop().run_until_complete():
-                        logger.debug("true")
+                        logger.debug("wallet %s at %s disabled" % (currency, exchange))
                         return True
                 except ccxt.errors.RequestTimeout:
                     logger.debug("%s request timeout" % exchange)
@@ -449,6 +460,15 @@ async def main_websocket(exchange, markets):
             await asyncio.sleep(1)
 
 async def background_task():
+    global poloniex_currencies, hitbtc2_currencies, bittrex_currencies
+    if 'poloniex' in exchange_ids:
+        # TODO: update every 10 minutes
+        poloniex_currencies = await exchanges['poloniex'].publicGetReturnCurrencies()
+    if 'hitbtc2' in exchange_ids:
+        hitbtc2_currencies = await exchanges['hitbtc2'].publicGetCurrency()
+    if 'bittrex' in exchange_ids:
+        bittrex_currencies = await exchanges['bittrex'].publicGetCurrencies()
+        bittrex_currencies = bittrex_currencies['result']
     for exchange, markets in coins_by_exchange.items():
         asyncio.gather(asyncio.ensure_future(main_websocket(exchange, markets)), return_exceptions=True)
     asyncio.gather(asyncio.ensure_future(send_status_update()), return_exceptions=True)
