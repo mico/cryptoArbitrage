@@ -56,4 +56,5 @@ class hitbtc(ccxt.hitbtc2):
                                            pair]
                     except Exception as err:
                         print("hitbtc error!!! %s" % err)
-                        raise Exception(err)
+                        break
+                        #raise Exception(err)

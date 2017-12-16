@@ -22,8 +22,11 @@ class poloniex(ccxt.poloniex):
 
     async def websocket_keepalive(self, websocket):
         while True:
-            await asyncio.sleep(60)
-            await websocket.send('.')
+            try:
+                await asyncio.sleep(60)
+                await websocket.send('.')
+            except websockets.ConnectionClosed:
+                break
 
     async def websocket_run(self, symbols):
         await self.load_markets()
@@ -78,8 +81,12 @@ class poloniex(ccxt.poloniex):
                                                 },
                                    market]
 
+                    except websockets.ConnectionClosed:
+                        break
+                        print("poloniex connection closed.")
                     except Exception as err:
                         print("poloniex ERROR!!! %s" % err)
+                        break
 
 
 def print_orders(pair, orderbooks):

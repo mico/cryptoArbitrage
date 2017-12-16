@@ -323,18 +323,6 @@ async def calculate_arbitrage2(pair):
 
                         elif arbitrage_stats[pair]['arbitrage'] != last_arbitrage:
                             logger.debug("found updated arbitrage: ")
-                            # TODO: if the same exchanges - do not update time found
-                            # NEXT: if same exchanges but spread became lesser - update time found
-                            # or became less just for 5% - do not update, more - update
-                            # became bigger - not update
-                            # arbitrage_stats[pair] = {
-                            #     'time': updated_time,
-                            #     'time_found': time(),
-                            #     'arbitrage': last_arbitrage,
-                            #     'lowestBASpread': lowestAskPair[pair][2],
-                            #     'highestBASpread': highestBidPair[pair][2]
-                            # }
-                            # do not touch time found
                             arbitrage_stats[pair]['time'] = updated_time
                             arbitrage_stats[pair]['arbitrage'] = last_arbitrage
                             arbitrage_stats[pair]['lowestBASpread'] = lowestAskPair[pair][2]
@@ -461,13 +449,15 @@ async def main_websocket(exchange, markets):
             await asyncio.sleep(1)
 
 async def background_task():
-    asyncio.gather(*([asyncio.ensure_future(main_websocket(exchange, markets)) for exchange, markets in coins_by_exchange.items()]))
-    asyncio.gather(asyncio.ensure_future(send_status_update()))
+    for exchange, markets in coins_by_exchange.items():
+        asyncio.gather(asyncio.ensure_future(main_websocket(exchange, markets)), return_exceptions=True)
+    asyncio.gather(asyncio.ensure_future(send_status_update()), return_exceptions=True)
 
 sio = socketio.AsyncServer()
 app = web.Application()
 sio.attach(app)
 
+# send current arbitrage and history data
 @sio.on('connect', namespace='/chat')
 async def connect(sid, environ):
     global arbitrage_history
