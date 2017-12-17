@@ -1,3 +1,4 @@
 janus
 cfscrape
 websockets
+numpy
