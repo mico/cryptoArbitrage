@@ -2,10 +2,15 @@ import json
 import websockets
 import ccxt.async as ccxt
 from time import time
+import logging
+import traceback
+
+logger = logging.getLogger('arbit')
 
 orderbooks = {}
 
 class hitbtc2(ccxt.hitbtc2):
+    global logger
     async def websocket_run(self, symbols):
         await self.load_markets()
         while True:
@@ -44,5 +49,6 @@ class hitbtc2(ccxt.hitbtc2):
                                                       },
                                            pair]
                     except Exception as err:
-                        print("hitbtc error!!! %s" % err)
+                        logger.error(err)
+                        logger.error(traceback.print_exc())
                         break
