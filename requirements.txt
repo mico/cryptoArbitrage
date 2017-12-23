@@ -2,3 +2,5 @@ janus
 cfscrape
 websockets
 numpy
+pandas
+requests_mock

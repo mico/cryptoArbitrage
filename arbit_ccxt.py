@@ -5,19 +5,19 @@ import socketio
 
 import asyncio
 import sys
-from time import time
+from time import time, mktime
 import yaml
-from influxdb import InfluxDBClient
+from influxdb import InfluxDBClient, DataFrameClient
 
 import ccxt.async as ccxt # noqa: E402
 import traceback
-import pickle
 import aiohttp.client_exceptions
 import logging
 import interfaces
 import numpy
 import pandas as pd
 import datetime
+import functools
 
 exchange_ids = ['poloniex', 'hitbtc2', 'bittrex']
 exchanges = {}
@@ -51,7 +51,7 @@ markets_success = 0
 orders_error = orders_success = 0
 
 config = yaml.safe_load(open("config.yml"))
-influx_client = InfluxDBClient(config['influxdb']['host'], config['influxdb']['port'], config['influxdb']['user'],
+influx_client = DataFrameClient(config['influxdb']['host'], config['influxdb']['port'], config['influxdb']['user'],
                                config['influxdb']['password'], config['influxdb']['database'])
 
 logger = logging.getLogger('arbit')
@@ -81,7 +81,7 @@ if config['check_wallets']:
         global bittrex_currencies
         for row in bittrex_currencies:
             if currency == row['Currency']:
-                return row['IsActive'] == False
+                return row['IsActive'] is False
         return False
 
     ccxt.bittrex.wallet_disabled = bittrex_wallet_disabled
@@ -91,7 +91,7 @@ if config['check_wallets']:
         global hitbtc2_currencies
         for row in hitbtc2_currencies:
             if currency == row['id']:
-                return row['payinEnabled'] == False or row['payoutEnabled'] == False
+                return row['payinEnabled'] is False or row['payoutEnabled'] is False
         return False
 
     ccxt.hitbtc2.wallet_disabled = hitbtc2_wallet_disabled
@@ -104,16 +104,15 @@ if config['check_wallets']:
 
     async def yobit_wallet_disabled(self, currency):
         if config['use_cached_data']:
-            if not 'wallet_disabled' in cached_data:
+            if 'wallet_disabled' not in cached_data:
                 cached_data['wallet_disabled'] = {}
             if 'yobit' in cached_data['wallet_disabled'] and currency in cached_data['wallet_disabled']['yobit'] \
-                and (cached_data['wallet_disabled']['yobit'][currency]['timestamp'] + \
-                    config['query_base_prices']['cache_expire_in']) > time():
+                and (cached_data['wallet_disabled']['yobit'][currency]['timestamp'] +
+                     config['query_base_prices']['cache_expire_in']) > time():
                 return cached_data['wallet_disabled']['yobit'][currency]['value']
         try:
             await asyncio.ensure_future(self.privatePostGetDepositAddress({'coinName': currency}))
         except ccxt.errors.ExchangeError as error:
-            #print(error)
             save_wallet_disabled('yobit', currency, True)
             return True
         else:
@@ -170,6 +169,7 @@ async def fetch_order_book(id, market):
         current_request += 1
         return [market, result]
     return [market, []] # exception happens
+
 
 async def get_orders(id, markets):
     global current_request, orders_error, orders_success
@@ -245,24 +245,31 @@ def any_exchange_changed(last_arbitrage, previous_arbitrage):
     return last_arbitrage['lowestAskExchange'] != previous_arbitrage['lowestAskExchange'] or \
            last_arbitrage['highestBidExchange'] != previous_arbitrage['highestBidExchange']
 
-def prepare_spreads(pair):
+def prepare_spreads(stats):
     # fill_count = int(current_time - arbitrage_stats[pair]['last_spread_by_period'][0]) - \
     #              len(arbitrage_stats[pair]['last_spread_by_period'][1])
     # arbitrage_stats[pair]['last_spread_by_period'][1].extend([last_arbitrage['spread_percent']]*fill_count)
-    start_time = int(arbitrage_stats[pair]['spread_history'][0][0])
-    end_time = int(arbitrage_stats[pair]['spread_history'][-1][0])
-    periods = end_time - start_time
-    dt = pd.date_range(datetime.datetime.fromtimestamp(start_time), periods=periods, freq='1s')
+    start_time = int(stats['spread_history'][0][0])
+    end_time = int(stats['spread_history'][-1][0])
+    periods = end_time - start_time + 1
+    dt = pd.date_range(datetime.datetime.utcfromtimestamp(start_time), periods=periods, freq='1s')
     current_index = 0
     data = [None] * periods
     for current_dt in dt:
-        for as_row in arbitrage_stats[pair]['spread_history']:
+        for as_row in stats['spread_history']:
             # XXX: slow
             if current_dt.timestamp() == int(as_row[0]):
                 data[current_index] = as_row[1]
+        current_index += 1
 
-    df = pd.DataFrame(data, index=dt)
-    return df
+    #import pdb; pdb.set_trace()
+    df = pd.DataFrame(data, columns=["spread"], index=dt)
+    return df.ffill()
+    # (Pdb) pp list(result[0].items())[0]
+    # (Timestamp('2017-01-01 10:30:00', freq='S'), None)
+    # (Pdb) pp list(result[0].items())[0][0].timestamp()
+    # 1483266600.0
+    # return [[mktime(row[0].timetuple()) * 1000000000, row[1]] for row in df.ffill()[0].items()]
 
 def calculate_spread(pair, last_arbitrage):
     global arbitrage_stats
@@ -284,23 +291,27 @@ def calculate_spread(pair, last_arbitrage):
 
         # add to last_spread_by_period
 
-async def save_to_influx(pair, stats):
+async def save_to_influx(df, stats):#pair, stats)
     loop = asyncio.get_event_loop()
-    for spread in stats['spread_history']:
-        json_body = [{
-            "measurement": "spreads",
-            "tags": {
-                "pair": pair,
-                "lowExchange": stats['arbitrage']['lowestAskExchange'],
-                "highExchange": stats['arbitrage']['highestBidExchange']
-            },
-            "time": int(spread[0] * 1000000000),
-            "fields": {
-                "spread": spread[1]
-            }
-        }]
-        result = await loop.run_in_executor(None, influx_client.write_points, json_body)
-        logger.debug("influx result: %s" % result)
+    # for spread in stats['spread_history']:
+    #     json_body = [{
+    #         "measurement": "spreads",
+    #         "tags": {
+    #             "pair": pair,
+    #             "lowExchange": stats['arbitrage']['lowestAskExchange'],
+    #             "highExchange": stats['arbitrage']['highestBidExchange']
+    #         },
+    #         "time": int(spread[0] * 1000000000),
+    #         "fields": {
+    #             "spread": spread[1]
+    #         }
+    #     }]
+
+    result = await loop.run_in_executor(None, functools.partial(influx_client.write_points, df, 'spreads', tags={
+        'lowExchange': stats['arbitrage']['lowestAskExchange'],
+        'highExchange': stats['arbitrage']['highestBidExchange']
+    }))
+    logger.debug("influx result: %s" % result)
 
 async def get_pairs_from_influx():
     global last_influx_pairs_update, influx_pairs
@@ -321,12 +332,8 @@ async def get_pairs_from_influx():
     return influx_pairs
 
 
-async def arbitrage_liquidate(pair, last_arbitrage):
+async def arbitrage_liquidate(pair):
     global arbitrage_history, arbitrage_stats
-    logger.debug("arbitrage liquidated:")
-    logger.debug("pair %s spread %.8f (%.3f%%) exchanges: %s/%s" % (pair,
-                 last_arbitrage['spread'], last_arbitrage['spread_percent'],
-                 last_arbitrage['lowestAskExchange'], last_arbitrage['highestBidExchange']))
     logger.debug("was alive %.1f seconds" % (time() - arbitrage_stats[pair]['updated']))
     # TODO: save arbitrage history (influxdb) before drop
     arbitrage_stats[pair]['finished'] = time()
@@ -341,7 +348,7 @@ async def arbitrage_liquidate(pair, last_arbitrage):
         arbitrage_stats[pair]['average_spread'] = numpy.mean(
             [row[1] for row in arbitrage_stats[pair]['spread_history']])
         # make sure previous task was completed
-        await save_to_influx(pair, arbitrage_stats[pair])
+        await save_to_influx(prepare_spreads(arbitrage_stats[pair]), arbitrage_stats[pair])
         # add to history only if more than 50 seconds
         if (time() - arbitrage_stats[pair]['time_found']) > 50:
             arbitrage_history.append(arbitrage_stats[pair])
@@ -349,7 +356,6 @@ async def arbitrage_liquidate(pair, last_arbitrage):
                 arbitrage_history = arbitrage_history[-100:]
             await send_arbitrage_history(arbitrage_stats[pair])
     del(arbitrage_stats[pair])
-    await send_update(pair)
 
 
 def arbitrage_update(pair, last_arbitrage, updated_time):
@@ -366,6 +372,22 @@ def arbitrage_update(pair, last_arbitrage, updated_time):
         arbitrage_stats[pair]['max_spread'] = last_arbitrage['spread']
     if last_arbitrage['spread'] < arbitrage_stats[pair]['min_spread']:
         arbitrage_stats[pair]['min_spread'] = last_arbitrage['spread']
+
+
+def arbitrage_new(pair, last_arbitrage, updated_time):
+    global arbitrage_stats
+
+    arbitrage_stats[pair] = {
+        'updated': updated_time,
+        'time_found': time(),
+        'arbitrage': last_arbitrage,
+        'lowestBASpread': lowestAskPair[pair][2],
+        'highestBASpread': highestBidPair[pair][2],
+        'max_spread': last_arbitrage['spread'],
+        'min_spread': last_arbitrage['spread'],
+        'spread_history': [],
+        'last_spread_by_period': [time(), [last_arbitrage['spread_percent']]]
+    }
 
 
 async def calculate_arbitrage2(pair):
@@ -390,17 +412,7 @@ async def calculate_arbitrage2(pair):
                     if spread_percent > 1:
                         if pair not in arbitrage_stats or any_exchange_changed(last_arbitrage, arbitrage_stats[pair]['arbitrage']):
                             logger.debug("found new arbitrage: ")
-                            arbitrage_stats[pair] = {
-                                'updated': updated_time,
-                                'time_found': time(),
-                                'arbitrage': last_arbitrage,
-                                'lowestBASpread': lowestAskPair[pair][2],
-                                'highestBASpread': highestBidPair[pair][2],
-                                'max_spread': last_arbitrage['spread'],
-                                'min_spread': last_arbitrage['spread'],
-                                'spread_history': [],
-                                'last_spread_by_period': [time(), [last_arbitrage['spread_percent']]]
-                            }
+                            arbitrage_new(pair, last_arbitrage, updated_time)
 
                         elif arbitrage_stats[pair]['arbitrage'] != last_arbitrage:
                             arbitrage_update(pair, last_arbitrage, updated_time)
@@ -415,13 +427,21 @@ async def calculate_arbitrage2(pair):
 
                         await send_update(pair)  # send update or found
                     elif pair in arbitrage_stats:
-                        await arbitrage_liquidate(pair, last_arbitrage)
+                        await arbitrage_liquidate(pair)
+                        await send_update(pair)
+
+                        logger.debug("arbitrage liquidated:")
+                        logger.debug("pair %s spread %.8f (%.3f%%) exchanges: %s/%s" % (pair,
+                                     last_arbitrage['spread'], last_arbitrage['spread_percent'],
+                                     last_arbitrage['lowestAskExchange'], last_arbitrage['highestBidExchange']))
+
                 elif pair in arbitrage_stats:
                     arbitrage_stats[pair]['updated'] = updated_time
                     await send_update(pair)  # send updated time for same data
     except Exception as err:
         logger.error(err)
         logger.error(traceback.print_exc())
+
 
 async def getLowest(pair, exchange_id, lowestAsk, highestBid, BASpread):
     try:
@@ -431,6 +451,7 @@ async def getLowest(pair, exchange_id, lowestAsk, highestBid, BASpread):
             await calculate_arbitrage2(pair)
     except Exception as err:
         print("error!!!: %s" % err)
+
 
 async def getHighest(pair, exchange_id, lowestAsk, highestBid, BASpread):
     try:
@@ -443,13 +464,11 @@ async def getHighest(pair, exchange_id, lowestAsk, highestBid, BASpread):
 
 
 async def calculate_arbitrage(pair, exchange_id, lowestAsk, highestBid, BASpread):
-    #print("calculate for %s exch %s" % (pair, exchange_id))
     try:
         await asyncio.gather(*[getLowest(pair, exchange_id, lowestAsk, highestBid, BASpread),
-                              getHighest(pair, exchange_id, lowestAsk, highestBid, BASpread)])
+                               getHighest(pair, exchange_id, lowestAsk, highestBid, BASpread)])
     except Exception as err:
         print("ERR!!! %s" % err)
-        # calculate possible arbitrage and send update if changed
 
 def calculate_price_by_volume(currency, orderbook):
     prices = []
@@ -457,18 +476,23 @@ def calculate_price_by_volume(currency, orderbook):
     for order in orderbook:
         prices.append(float(order[0]))
         total_volume += (float(order[0]) * float(order[1]))
-        if total_volume >= config['minimal_volume'][currency]: break
+        if total_volume >= config['minimal_volume'][currency]:
+            break
     else:
-        logger.1("total volume %s instead of %s needed for %s orders" % (total_volume, config['minimal_volume'][currency], len(prices)))
+        logger.debug("total volume %s instead of %s needed for %s orders" % (total_volume,
+                     config['minimal_volume'][currency], len(prices)))
     return sum(prices)/len(prices)
+
 
 # check if wallet deposit is disabled on exchange
 async def check_wallets(pair, wallet_exchanges):
-    exchanges_has_check_wallet = list(filter(lambda x: hasattr(exchanges[x], 'wallet_disabled'), wallet_exchanges))
+    exchanges_has_check_wallet = list(filter(lambda x: hasattr(exchanges[x], 'wallet_disabled'),
+                                      wallet_exchanges))
     if len(exchanges_has_check_wallet) > 0:
         for exchange in exchanges_has_check_wallet:
             for currency in pair.split('/'):
-                if currency == 'BTC': continue
+                if currency == 'BTC':
+                    continue
                 try:
                     logger.debug("checking wallet %s at %s" % (currency, exchange))
                     if await exchanges[exchange].wallet_disabled(currency):
@@ -479,6 +503,7 @@ async def check_wallets(pair, wallet_exchanges):
                     pass
                 logger.debug("false")
     return False
+
 
 async def main_websocket(exchange, markets):
     global exchange_pair_updated, last_exchange_update
@@ -504,6 +529,7 @@ async def main_websocket(exchange, markets):
             logger.error(traceback.print_exc())
             await asyncio.sleep(1)
 
+
 async def get_exchange_currencies():
     global poloniex_currencies, hitbtc2_currencies, bittrex_currencies
     if 'poloniex' in exchange_ids:
@@ -515,6 +541,7 @@ async def get_exchange_currencies():
         bittrex_currencies = await exchanges['bittrex'].publicGetCurrencies()
         bittrex_currencies = bittrex_currencies['result']
 
+
 async def update_exchange_data(loop=False):
     if loop:
         while True:
@@ -522,6 +549,7 @@ async def update_exchange_data(loop=False):
             await get_exchange_currencies()
     else:
         await get_exchange_currencies()
+
 
 async def background_task():
     await update_exchange_data()
@@ -531,6 +559,7 @@ async def background_task():
     for exchange, markets in coins_by_exchange.items():
         asyncio.gather(asyncio.ensure_future(main_websocket(exchange, markets)), return_exceptions=True)
     asyncio.gather(asyncio.ensure_future(send_status_update()), return_exceptions=True)
+
 
 if __name__ == '__main__':
     for id in exchange_ids:
@@ -542,10 +571,13 @@ if __name__ == '__main__':
     if not config['update_cached_data'] and config['use_cached_data'] and 'all_markets' in cached_data:
         all_markets = cached_data['all_markets']
     else:
-        all_markets = loop.run_until_complete(asyncio.gather(*[asyncio.ensure_future(get_markets(id)) for id in exchange_ids]))
+        all_markets = loop.run_until_complete(asyncio.gather(
+            *[asyncio.ensure_future(get_markets(id)) for id in exchange_ids])
+        )
 
     for exchange_id, markets in all_markets:
-        if markets == None: continue
+        if markets is None:
+            continue
         for market in markets:
             if market in coins:
                 coins[market].append(exchange_id)
@@ -555,7 +587,8 @@ if __name__ == '__main__':
     new_coins = {}
 
     for pair in coins:
-        if len(coins[pair]) > 1 and (pair.split('/')[1] in config['minimal_volume'].keys()): new_coins[pair] = coins[pair]
+        if len(coins[pair]) > 1 and (pair.split('/')[1] in config['minimal_volume'].keys()):
+            new_coins[pair] = coins[pair]
     total_pairs = len(new_coins.keys())
     logger.info("found %s pairs for arbitrage" % total_pairs)
     if total_pairs < 1:
