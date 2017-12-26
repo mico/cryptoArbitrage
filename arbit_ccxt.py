@@ -18,6 +18,7 @@ import numpy
 import pandas as pd
 import datetime
 import functools
+import copy
 
 exchange_ids = ['poloniex', 'hitbtc2', 'bittrex']
 exchanges = {}
@@ -246,9 +247,6 @@ def any_exchange_changed(last_arbitrage, previous_arbitrage):
            last_arbitrage['highestBidExchange'] != previous_arbitrage['highestBidExchange']
 
 def prepare_spreads(stats):
-    # fill_count = int(current_time - arbitrage_stats[pair]['last_spread_by_period'][0]) - \
-    #              len(arbitrage_stats[pair]['last_spread_by_period'][1])
-    # arbitrage_stats[pair]['last_spread_by_period'][1].extend([last_arbitrage['spread_percent']]*fill_count)
     start_time = int(stats['spread_history'][0][0])
     end_time = int(stats['spread_history'][-1][0])
     periods = end_time - start_time + 1
@@ -262,50 +260,15 @@ def prepare_spreads(stats):
                 data[current_index] = as_row[1]
         current_index += 1
 
-    #import pdb; pdb.set_trace()
     df = pd.DataFrame(data, columns=["spread"], index=dt)
     return df.ffill()
-    # (Pdb) pp list(result[0].items())[0]
-    # (Timestamp('2017-01-01 10:30:00', freq='S'), None)
-    # (Pdb) pp list(result[0].items())[0][0].timestamp()
-    # 1483266600.0
-    # return [[mktime(row[0].timetuple()) * 1000000000, row[1]] for row in df.ffill()[0].items()]
 
 def calculate_spread(pair, last_arbitrage):
     global arbitrage_stats
     arbitrage_stats[pair]['spread_history'].append([time(), last_arbitrage['spread_percent']])
 
-    # if current_time - arbitrage_stats[pair]['last_spread_by_period'][0] > 10:
-    #     # add to spread history
-    #     arbitrage_stats[pair]['spread_history'] += [[
-    #         arbitrage_stats[pair]['last_spread_by_period'][0],
-    #         numpy.mean(arbitrage_stats[pair]['last_spread_by_period'][1])]]
-    #     if last_arbitrage:
-    #         arbitrage_stats[pair]['last_spread_by_period'] = [current_time, [last_arbitrage['spread_percent']]]
-    # elif last_arbitrage is not None:
-    #     # arbitrage_stats[pair]['last_spread_by_period'][1] - array or 10 values
-    #
-    #     fill_count = int(current_time - arbitrage_stats[pair]['last_spread_by_period'][0]) -
-    #                  len(arbitrage_stats[pair]['last_spread_by_period'][1])
-    #     arbitrage_stats[pair]['last_spread_by_period'][1].extend([last_arbitrage['spread_percent']]*fill_count)
-
-        # add to last_spread_by_period
-
 async def save_to_influx(df, stats):#pair, stats)
     loop = asyncio.get_event_loop()
-    # for spread in stats['spread_history']:
-    #     json_body = [{
-    #         "measurement": "spreads",
-    #         "tags": {
-    #             "pair": pair,
-    #             "lowExchange": stats['arbitrage']['lowestAskExchange'],
-    #             "highExchange": stats['arbitrage']['highestBidExchange']
-    #         },
-    #         "time": int(spread[0] * 1000000000),
-    #         "fields": {
-    #             "spread": spread[1]
-    #         }
-    #     }]
 
     result = await loop.run_in_executor(None, functools.partial(influx_client.write_points, df, 'spreads', tags={
         'lowExchange': stats['arbitrage']['lowestAskExchange'],
@@ -327,35 +290,31 @@ async def get_pairs_from_influx():
 #   'time': '2017-12-18T12:06:32.772818842Z'}]
 
         influx_pairs = dict([[row[0][1]['pair'], list(row[1])[0]] for row in result.items()])
-        #influx_pairs = [row['value'] for row in list(result)[0]]
         last_influx_pairs_update = time()
     return influx_pairs
 
 
-async def arbitrage_liquidate(pair):
+async def arbitrage_liquidate(stats, pair):
     global arbitrage_history, arbitrage_stats
-    logger.debug("was alive %.1f seconds" % (time() - arbitrage_stats[pair]['updated']))
+    logger.debug("was alive %.1f seconds" % (time() - stats['updated']))
     # TODO: save arbitrage history (influxdb) before drop
-    arbitrage_stats[pair]['finished'] = time()
-    arbitrage_stats[pair]['pair'] = pair
+    stats['finished'] = time()
+    stats['pair'] = pair
     # track spread history
-    #calculate_spread(pair)
-    # send to influx and add to history only if spread_history has eny entry
-
-    # fill starting from arbitrage_stats[pair]['time_found']
-    # every 10 seconds until finished
-    if len(arbitrage_stats[pair]['spread_history']) > 0:
-        arbitrage_stats[pair]['average_spread'] = numpy.mean(
-            [row[1] for row in arbitrage_stats[pair]['spread_history']])
+    if len(stats['spread_history']) > 0:
+        df = prepare_spreads(stats)
+        stats['average_spread'] = df.mean()['spread']
         # make sure previous task was completed
-        await save_to_influx(prepare_spreads(arbitrage_stats[pair]), arbitrage_stats[pair])
+
+        await save_to_influx(df, stats)
         # add to history only if more than 50 seconds
-        if (time() - arbitrage_stats[pair]['time_found']) > 50:
-            arbitrage_history.append(arbitrage_stats[pair])
+        if (time() - stats['time_found']) > 50:
+            arbitrage_history.append(stats)
             if len(arbitrage_history) > 100:
                 arbitrage_history = arbitrage_history[-100:]
-            await send_arbitrage_history(arbitrage_stats[pair])
-    del(arbitrage_stats[pair])
+            await send_arbitrage_history(stats)
+    if pair in arbitrage_stats:
+        del(arbitrage_stats[pair])
 
 
 def arbitrage_update(pair, last_arbitrage, updated_time):
@@ -427,7 +386,7 @@ async def calculate_arbitrage2(pair):
 
                         await send_update(pair)  # send update or found
                     elif pair in arbitrage_stats:
-                        await arbitrage_liquidate(pair)
+                        await arbitrage_liquidate(copy.copy(arbitrage_stats[pair]), pair)
                         await send_update(pair)
 
                         logger.debug("arbitrage liquidated:")
@@ -441,7 +400,7 @@ async def calculate_arbitrage2(pair):
     except Exception as err:
         logger.error(err)
         logger.error(traceback.print_exc())
-
+        raise
 
 async def getLowest(pair, exchange_id, lowestAsk, highestBid, BASpread):
     try:
