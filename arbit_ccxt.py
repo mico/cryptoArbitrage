@@ -496,7 +496,8 @@ def check_exchange_updated():
                 fail_time = time()
             elif fail_time + 60 < time():
                 logger.error("!!! %s didn't update for a long time" % exchange)
-                import pdb; pdb.set_trace()
+                fail_time = None
+                #import pdb; pdb.set_trace()
             return
     fail_time = None
 
