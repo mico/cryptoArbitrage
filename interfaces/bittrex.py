@@ -12,15 +12,13 @@ from signalr import Connection
 
 market_connection_ids = {}
 orderbooks = {}
+connection_open = True
 
 # TODO: check Nounce and put on queue
 
 class Connection(Connection):
     def get_send_counter(self):
         return self.__send_counter
-
-def print_error(error):
-    print('error: ', error)
 
 class bittrex(ccxt.bittrex):
     def signalr_connected(self, *args, **kwargs):
@@ -56,13 +54,20 @@ class bittrex(ccxt.bittrex):
                         pass
             self.queue.put(market)
 
+    def error(self, error):
+        global connection_open
+        print('error: ', error)
+        if error == 'connection closed':
+            connection_open = False
+            self.queue.put("closed")
+
     async def signalr_connect(self, symbols, queue):
         self.queue = queue
         with cfscrape.create_scraper() as session:
             connection = Connection("https://www.bittrex.com/signalR/", session)
             chat = connection.register_hub('corehub')
             connection.received += self.signalr_connected
-            connection.error += print_error
+            connection.error += self.error
             await connection.start()
 
             chat.client.on('updateExchangeState', self.signalr_message)
@@ -73,13 +78,16 @@ class bittrex(ccxt.bittrex):
                 market_connection_ids[connection.get_send_counter()] = symbol
 
     async def websocket_run(self, symbols):
+        global connection_open
         await self.load_markets()
 
         loop = asyncio.get_event_loop()
         queue = janus.Queue(loop=loop)
         await self.signalr_connect(symbols, queue.sync_q)
-        while True:
+        while connection_open:
             market = await queue.async_q.get()
+            if market == "closed":
+                break
 
             yield ['bittrex', {'asks': list(sorted(orderbooks[market]['asks'].items())),
                                'bids': list(sorted(orderbooks[market]['bids'].items(), reverse=True))
