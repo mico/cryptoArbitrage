@@ -13,7 +13,9 @@ import ccxt.async as ccxt # noqa: E402
 import traceback
 import aiohttp.client_exceptions
 import logging
-import interfaces
+import interfaces.hitbtc2
+import interfaces.poloniex
+import interfaces.bittrex
 import numpy
 import pandas as pd
 import datetime
@@ -272,7 +274,8 @@ async def save_to_influx(df, stats):#pair, stats)
 
     result = await loop.run_in_executor(None, functools.partial(influx_client.write_points, df, 'spreads', tags={
         'lowExchange': stats['arbitrage']['lowestAskExchange'],
-        'highExchange': stats['arbitrage']['highestBidExchange']
+        'highExchange': stats['arbitrage']['highestBidExchange'],
+        'pair': stats['pair']
     }))
     logger.debug("influx result: %s" % result)
 
@@ -281,7 +284,7 @@ async def get_pairs_from_influx():
     if time() - last_influx_pairs_update > 60:
         #result = await loop.run_in_executor(None, influx_client.query, "show tag values with key = pair")
         result = await loop.run_in_executor(None, influx_client.query,
-            "select mean(spread), count(spread) from spreads where time > now() - 24h group by pair")
+            "select mean(spread), max(spread), count(spread) from spreads where time > now() - 24h group by pair")
 # (Pdb) pp res.items()[0][0]
 # ('spreads', {'pair': 'BTCD/BTC'})
 # (Pdb) pp list(res.items()[0][1])
@@ -289,10 +292,17 @@ async def get_pairs_from_influx():
 #   'mean': 2.336122613790616,
 #   'time': '2017-12-18T12:06:32.772818842Z'}]
 
-        influx_pairs = dict([[row[0][1]['pair'], list(row[1])[0]] for row in result.items()])
+        influx_pairs = dict([[row[0][1][0][1], {'count': int(row[1]['count'][0]), 'mean': float(row[1]['mean'][0]), 'max': float(row[1]['max'][0])}] for row in result.items()])
+        #import pdb; pdb.set_trace()
         last_influx_pairs_update = time()
     return influx_pairs
 
+def is_exchanges_updated(exchanges):
+    global last_exchange_update
+    for exchange in exchanges:
+        if last_exchange_update[exchange] + 10 < time():
+            return False
+    return True
 
 async def arbitrage_liquidate(stats, pair):
     global arbitrage_history, arbitrage_stats
@@ -300,8 +310,11 @@ async def arbitrage_liquidate(stats, pair):
     # TODO: save arbitrage history (influxdb) before drop
     stats['finished'] = time()
     stats['pair'] = pair
-    # track spread history
-    if len(stats['spread_history']) > 0:
+    # add last value to history until current time to make correct spread in DataFrame
+    if int(stats['spread_history'][-1][0]) < int(stats['finished']) - 1:
+        stats['spread_history'].append([int(stats['finished'])-1, stats['spread_history'][-1][1]])
+    if len(stats['spread_history']) > 0 and \
+            is_exchanges_updated([stats['arbitrage'][a] for a in ['highestBidExchange', 'lowestAskExchange']]):
         df = prepare_spreads(stats)
         stats['average_spread'] = df.mean()['spread']
         # make sure previous task was completed
@@ -347,7 +360,7 @@ def arbitrage_new(pair, last_arbitrage, updated_time):
         'spread_history': [],
         'last_spread_by_period': [time(), [last_arbitrage['spread_percent']]]
     }
-
+    calculate_spread(pair, last_arbitrage)
 
 async def calculate_arbitrage2(pair):
     global arbitrage_history, arbitrage_stats
@@ -468,8 +481,9 @@ async def main_websocket(exchange, markets):
     global exchange_pair_updated, last_exchange_update
     while True:
         try:
-            ex = getattr(interfaces, exchange)()
-            async for (exchange_id, orderbook, updated_pair) in ex.websocket_run(coins_by_exchange[exchange]):
+            ex = getattr(getattr(interfaces, exchange), exchange)()
+
+            async for (exchange_id, orderbook, updated_pair) in ex.websocket_run(markets):
                 if updated_pair not in exchange_pair_updated:
                     exchange_pair_updated[updated_pair] = {exchange: time()}
                 else:
@@ -486,6 +500,7 @@ async def main_websocket(exchange, markets):
         except Exception as err:
             logger.error(err)
             logger.error(traceback.print_exc())
+            #raise
             await asyncio.sleep(1)
 
 
