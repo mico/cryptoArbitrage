@@ -45,7 +45,7 @@ last_update_send = 0
 last_exchange_update = {}
 arbitrage_history = []  # arbitrage profit range, high/low exchange, time found, time was exists
 last_influx_pairs_update = 0
-influx_pairs = []
+influx_pairs = pairs_stats = []
 bittrex_currencies = None
 hitbtc2_currencies = None
 poloniex_currencies = None
@@ -280,7 +280,7 @@ async def save_to_influx(df, stats):#pair, stats)
     logger.debug("influx result: %s" % result)
 
 async def get_pairs_from_influx():
-    global last_influx_pairs_update, influx_pairs
+    global last_influx_pairs_update, influx_pairs, pairs_stats
     if time() - last_influx_pairs_update > 60:
         #result = await loop.run_in_executor(None, influx_client.query, "show tag values with key = pair")
         result = await loop.run_in_executor(None, influx_client.query,
@@ -293,9 +293,19 @@ async def get_pairs_from_influx():
 #   'time': '2017-12-18T12:06:32.772818842Z'}]
 
         influx_pairs = dict([[row[0][1][0][1], {'count': int(row[1]['count'][0]), 'mean': float(row[1]['mean'][0]), 'max': float(row[1]['max'][0])}] for row in result.items()])
+
+        result = await loop.run_in_executor(
+            None, influx_client.query,
+            "select mean(spread), max(spread), count(spread) from spreads where time > now() - 24h group by pair, highExchange, lowExchange"
+        )
         #import pdb; pdb.set_trace()
+        pairs_stats = [dict(row[0][1] + (
+            ('count', int(row[1]['count'][0])),
+            ('mean', float(row[1]['mean'][0])),
+            ('max', float(row[1]['max'][0]))
+        )) for row in result.items()]
         last_influx_pairs_update = time()
-    return influx_pairs
+    return {'pairs': pairs_stats, 'general': influx_pairs}
 
 def is_exchanges_updated(exchanges):
     global last_exchange_update
@@ -476,6 +486,19 @@ async def check_wallets(pair, wallet_exchanges):
                 logger.debug("false")
     return False
 
+fail_time = None
+
+def check_exchange_updated():
+    global last_exchange_update, fail_time
+    for exchange, updated_at in last_exchange_update.items():
+        if (updated_at + 30) < time():
+            if fail_time is None:
+                fail_time = time()
+            elif fail_time + 60 < time():
+                logger.error("!!! %s didn't update for a long time" % exchange)
+                import pdb; pdb.set_trace()
+            return
+    fail_time = None
 
 async def main_websocket(exchange, markets):
     global exchange_pair_updated, last_exchange_update
@@ -484,6 +507,7 @@ async def main_websocket(exchange, markets):
             ex = getattr(getattr(interfaces, exchange), exchange)()
 
             async for (exchange_id, orderbook, updated_pair) in ex.websocket_run(markets):
+                check_exchange_updated()
                 if updated_pair not in exchange_pair_updated:
                     exchange_pair_updated[updated_pair] = {exchange: time()}
                 else:
@@ -498,7 +522,7 @@ async def main_websocket(exchange, markets):
                     BASpread = (float(orderbook['asks'][0][0]) - float(orderbook['bids'][0][0])) / (float(orderbook['asks'][0][0]) / 100)
                     await calculate_arbitrage(updated_pair, exchange_id, lowestAsk, highestBid, BASpread)
         except Exception as err:
-            logger.error(err)
+            logger.error(sys.exc_info()[0])
             logger.error(traceback.print_exc())
             #raise
             await asyncio.sleep(1)
