@@ -84,7 +84,7 @@ class bittrex(ccxt.bittrex):
         loop = asyncio.get_event_loop()
         queue = janus.Queue(loop=loop)
         await self.signalr_connect(symbols, queue.sync_q)
-        while connection_open:
+        while True:
             market = await queue.async_q.get()
             if market == "closed":
                 break
