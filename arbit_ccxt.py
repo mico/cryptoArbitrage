@@ -16,13 +16,14 @@ import logging
 import interfaces.hitbtc2
 import interfaces.poloniex
 import interfaces.bittrex
+import interfaces.bitfinex
 import numpy
 import pandas as pd
 import datetime
 import functools
 import copy
 
-exchange_ids = ['poloniex', 'hitbtc2', 'bittrex']
+exchange_ids = ['poloniex', 'hitbtc2', 'bittrex', 'bitfinex']
 exchanges = {}
 coins = {}
 cheapest_ask = {}
@@ -497,7 +498,7 @@ def check_exchange_updated():
             elif fail_time + 60 < time():
                 logger.error("!!! %s didn't update for a long time" % exchange)
                 fail_time = None
-                #import pdb; pdb.set_trace()
+                # import pdb; pdb.set_trace()
             return
     fail_time = None
 
