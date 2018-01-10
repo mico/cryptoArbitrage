@@ -283,6 +283,13 @@ class TestStringMethods(unittest.TestCase):
             self.assertEqual(len(arbit_ccxt.arbitrage_history), 0)
         pass
 
+    def test_calculate_price_by_volume(self):
+        self.assertEqual(arbit_ccxt.calculate_price_by_volume('BTC', [
+            [0.2, 0.01],
+            [0.1, 0.09],
+        ]), 0.11)
+
+
 @asyncio.coroutine
 def handler(ws, path):
     raise
@@ -386,7 +393,6 @@ class InterfacesTests(unittest.TestCase):
         #ex = interfaces.hitbtc2()
         self.loop.run_until_complete(arbit_ccxt.main_websocket('hitbtc2', ['ETH/BTC']))
         #self.assertEqual(reply, "Hello!")
-
 
 if __name__ == '__main__':
     unittest.main()

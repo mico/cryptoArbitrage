@@ -17,13 +17,14 @@ import interfaces.hitbtc2
 import interfaces.poloniex
 import interfaces.bittrex
 import interfaces.bitfinex
+import interfaces.binance
 import numpy
 import pandas as pd
 import datetime
 import functools
 import copy
 
-exchange_ids = ['poloniex', 'hitbtc2', 'bittrex', 'bitfinex']
+exchange_ids = ['poloniex', 'hitbtc2', 'bittrex', 'bitfinex', 'binance']
 exchanges = {}
 coins = {}
 cheapest_ask = {}
@@ -50,6 +51,7 @@ influx_pairs = pairs_stats = []
 bittrex_currencies = None
 hitbtc2_currencies = None
 poloniex_currencies = None
+binance_currencies = None
 markets_error = 0
 markets_success = 0
 orders_error = orders_success = 0
@@ -124,6 +126,16 @@ if config['check_wallets']:
             return False
 
     ccxt.yobit.wallet_disabled = yobit_wallet_disabled
+
+    async def binance_wallet_disabled(self, currency):
+        # TODO: cache this query
+        global binance_currencies
+        for row in binance_currencies:
+            if currency == row['assetCode']:
+                return row['enableWithdraw'] is False or row['enableCharge'] is False
+        return False
+
+    ccxt.binance.wallet_disabled = binance_wallet_disabled
 
 
 async def get_markets(id):
@@ -373,6 +385,7 @@ def arbitrage_new(pair, last_arbitrage, updated_time):
     }
     calculate_spread(pair, last_arbitrage)
 
+
 async def calculate_arbitrage2(pair):
     global arbitrage_history, arbitrage_stats
     try:
@@ -392,6 +405,7 @@ async def calculate_arbitrage2(pair):
                 updated_time = min(exchange_pair_updated[pair][lowestAskPair[pair][1]],
                                    exchange_pair_updated[pair][highestBidPair[pair][1]])
                 if pair not in arbitrage_stats or arbitrage_stats[pair]['arbitrage'] != last_arbitrage:
+                    # if 'bitfinex' in [lowestAskPair[pair][1], highestBidPair[pair][1]]:
                     if spread_percent > 1:
                         if pair not in arbitrage_stats or any_exchange_changed(last_arbitrage, arbitrage_stats[pair]['arbitrage']):
                             logger.debug("found new arbitrage: ")
@@ -454,17 +468,18 @@ async def calculate_arbitrage(pair, exchange_id, lowestAsk, highestBid, BASpread
         print("ERR!!! %s" % err)
 
 def calculate_price_by_volume(currency, orderbook):
-    prices = []
     total_volume = 0
+    volume = 0
     for order in orderbook:
-        prices.append(float(order[0]))
         total_volume += (float(order[0]) * float(order[1]))
+        volume += float(order[1])
+
         if total_volume >= config['minimal_volume'][currency]:
             break
     else:
-        logger.debug("total volume %s instead of %s needed for %s orders" % (total_volume,
-                     config['minimal_volume'][currency], len(prices)))
-    return sum(prices)/len(prices)
+        logger.info("total volume %s instead of %s needed for %s orders" % (total_volume,
+                     config['minimal_volume'][currency], len(orderbook)))
+    return total_volume/volume
 
 
 # check if wallet deposit is disabled on exchange
@@ -531,7 +546,7 @@ async def main_websocket(exchange, markets):
 
 
 async def get_exchange_currencies():
-    global poloniex_currencies, hitbtc2_currencies, bittrex_currencies
+    global poloniex_currencies, hitbtc2_currencies, bittrex_currencies, binance_currencies
     if 'poloniex' in exchange_ids:
         # TODO: update every 10 minutes
         poloniex_currencies = await exchanges['poloniex'].publicGetReturnCurrencies()
@@ -540,6 +555,9 @@ async def get_exchange_currencies():
     if 'bittrex' in exchange_ids:
         bittrex_currencies = await exchanges['bittrex'].publicGetCurrencies()
         bittrex_currencies = bittrex_currencies['result']
+    if 'binance' in exchange_ids:
+        binance_currencies = await exchanges['binance'].fetch('https://www.binance.com/assetWithdraw/getAllAsset.html')
+        #import pdb; pdb.set_trace()
 
 
 async def update_exchange_data(loop=False):
@@ -589,6 +607,9 @@ if __name__ == '__main__':
     for pair in coins:
         if len(coins[pair]) > 1 and (pair.split('/')[1] in config['minimal_volume'].keys()):
             new_coins[pair] = coins[pair]
+    exchanges_has_relations = list(set(sum([exchange_ids for pair, exchange_ids in new_coins.items()], [])))
+    # TODO: count relations
+
     total_pairs = len(new_coins.keys())
     logger.info("found %s pairs for arbitrage" % total_pairs)
     if total_pairs < 1:

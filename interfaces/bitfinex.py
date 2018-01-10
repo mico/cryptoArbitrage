@@ -14,6 +14,7 @@ class bitfinex(ccxt.bitfinex):
     global logger
 
     async def websocket_run(self, symbols):
+        global orderbooks, channel_ids
         await self.load_markets()
         ws_client = websockets.connect('wss://api.bitfinex.com/ws/2')
         async with ws_client as websocket:
@@ -64,4 +65,6 @@ class bitfinex(ccxt.bitfinex):
                 except Exception as err:
                     logger.error(err)
                     logger.error(traceback.print_exc())
+                    # reload everything
+                    orderbooks = channel_ids = {}
                     break

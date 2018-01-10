@@ -14,6 +14,7 @@ class hitbtc2(ccxt.hitbtc2):
     global logger
 
     async def websocket_run(self, symbols):
+        global orderbooks
         await self.load_markets()
         ws_client = websockets.connect('wss://api.hitbtc.com/api/2/ws')
         async with ws_client as websocket:
@@ -55,5 +56,7 @@ class hitbtc2(ccxt.hitbtc2):
                 except Exception as err:
                     logger.error(err)
                     logger.error(traceback.print_exc())
+                    # reload snapshots
+                    orderbooks = {}
                     #raise
                     break
