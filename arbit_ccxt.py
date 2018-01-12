@@ -24,7 +24,7 @@ import datetime
 import functools
 import copy
 
-exchange_ids = ['poloniex', 'hitbtc2', 'bittrex', 'bitfinex', 'binance']
+exchange_ids = ['poloniex', 'hitbtc2', 'bitfinex', 'binance']
 exchanges = {}
 coins = {}
 cheapest_ask = {}
@@ -537,12 +537,15 @@ async def main_websocket(exchange, markets):
                     lowestAsk = calculate_price_by_volume(updated_pair.split('/')[1], orderbook['asks'])
                     highestBid = calculate_price_by_volume(updated_pair.split('/')[1], orderbook['bids'])
                     BASpread = (float(orderbook['asks'][0][0]) - float(orderbook['bids'][0][0])) / (float(orderbook['asks'][0][0]) / 100)
+                    if BASpread < 0:
+                        logger.error("BASpread negative for %s at %s: %s" % (updated_pair, exchange_id,
+                                     [orderbook['asks'][0], orderbook['bids'][0]]))
                     await calculate_arbitrage(updated_pair, exchange_id, lowestAsk, highestBid, BASpread)
         except Exception as err:
             logger.error(sys.exc_info()[0])
             logger.error(traceback.print_exc())
             #raise
-            await asyncio.sleep(1)
+        await asyncio.sleep(1)
 
 
 async def get_exchange_currencies():
