@@ -5,7 +5,10 @@ import janus
 import ccxt.async as ccxt
 import cfscrape
 from signalr import Connection
+import logging
+import traceback
 
+logger = logging.getLogger('arbit')
 # {'MarketName': None, 'Nounce': 18255, 'Buys': [{'Quantity': 6.81746367, 'Rate': 0.04055002}, {'Quantity': 7.42865764, 'Rate': 0.04055001}, {'Quantity': 25.14801556, 'Rate': 0.04055}
 # ({'MarketName': 'BTC-ETH', 'Nounce': 18285, 'Buys': [{'Type': 0, 'Rate': 0.0400334, 'Quantity': 96.1451}, {'Type': 1, 'Rate': 0.04001764, 'Quantity': 0.0}], 'Sells': [], 'Fills': []},)
 # 'Fills': [{'OrderType': 'SELL', 'Rate': 0.040522, 'Quantity': 0.1, 'TimeStamp': '2017-12-04T16:27:22.18'}]}
@@ -13,6 +16,8 @@ from signalr import Connection
 market_connection_ids = {}
 orderbooks = {}
 connection_open = True
+last_nounce = {}
+snapshot_nounce = {}
 
 # TODO: check Nounce and put on queue
 
@@ -22,37 +27,86 @@ class Connection(Connection):
 
 class bittrex(ccxt.bittrex):
     def signalr_connected(self, *args, **kwargs):
+        global snapshot_nounce
+        # import pdb; pdb.set_trace()
+        # save snapshot kwargs['R']['Nounce']
         if 'R' in kwargs and type(kwargs['R']) is not bool:
             market = market_connection_ids[int(kwargs['I'])]
+            snapshot_nounce[market] = kwargs['R']['Nounce']
             orderbooks[market] = {
                 'bids': dict([[row['Rate'], row['Quantity']] for row in kwargs['R']['Buys']]),
                 'asks': dict([[row['Rate'], row['Quantity']] for row in kwargs['R']['Sells']])
             }
             self.queue.put(market)
-
-    def signalr_message(self, *args, **kwargs):
-        # import pdb; pdb.set_trace()
-        market = self.markets_by_id[args[0]['MarketName']]['symbol']
+    def parse_message(self, message):
+        market = self.markets_by_id[message['MarketName']]['symbol']
         if market in orderbooks:
-            if len(args) > 1:
-                raise Exception("args more then 1")
-            for row in args[0]['Buys']:
-                if row['Type'] in [0, 2]: # 0 - remove, 2 - sold/bought I think
+            for row in message['Buys']:
+                if row['Type'] in [0, 2]:  # 0 - remove, 2 - sold/bought I think
                     orderbooks[market]['bids'][row['Rate']] = row['Quantity']
                 else:
                     try:
                         del(orderbooks[market]['bids'][row['Rate']])
-                    except:
+                    except Exception:
                         pass
-            for row in args[0]['Sells']:
+            for row in message['Sells']:
                 if row['Type'] in [0, 2]:
                     orderbooks[market]['asks'][row['Rate']] = row['Quantity']
                 else:
                     try:
                         del(orderbooks[market]['asks'][row['Rate']])
-                    except:
+                    except Exception:
                         pass
+            #print("updated %s" % market)
+            last_nounce[market] = message['Nounce']
             self.queue.put(market)
+
+    def signalr_message(self, *args, **kwargs):
+        global last_nounce, logger
+        try:
+            if len(args) > 1:
+                raise Exception("args more then 1")
+
+            market = self.markets_by_id[args[0]['MarketName']]['symbol']
+
+            #print(args[0]['Nounce'])
+            if market not in snapshot_nounce:
+                # TODO: put to queue
+                self.pre_queue.append(args[0])
+                return
+            if len(self.pre_queue) > 0:
+                for q in self.pre_queue:
+                    if self.markets_by_id[q['MarketName']]['symbol'] == market:
+                        # print("q nounce: %s, snapshot nounce: %s" % (q['Nounce'], snapshot_nounce[market]))
+                        if q['Nounce'] == snapshot_nounce[market]:
+                            # print("found snapshot nounce for %s" % market)
+                            pass
+                        elif q['Nounce'] == (snapshot_nounce[market] + 1):
+                            # print("found snapshot nounce + 1 for %s" % market)
+                            self.parse_message(q)
+                        self.pre_queue.remove(q)
+
+            if market in last_nounce:
+                if args[0]['Nounce'] < last_nounce[market]:
+                    # print("old Nounce skip")
+                    return
+                elif args[0]['Nounce'] == last_nounce[market]:
+                    # print("nounce the same, skip!!!")
+                    return
+                elif args[0]['Nounce'] == (last_nounce[market] + 1):
+                    self.parse_message(args[0])
+            elif args[0]['Nounce'] == (snapshot_nounce[market] + 1):
+                self.parse_message(args[0])
+            # else:
+            #     if args[0]['Nounce'] < snapshot_nounce[market]:
+            #         print("nounce less than in snapshot!!!")
+            #         return
+            # self.parse_message(args[0])
+
+        except Exception as err:
+            logger.error(err)
+            logger.error(traceback.print_exc())
+            return
 
     def error(self, error):
         global connection_open
@@ -83,6 +137,7 @@ class bittrex(ccxt.bittrex):
 
         loop = asyncio.get_event_loop()
         queue = janus.Queue(loop=loop)
+        self.pre_queue = []
         await self.signalr_connect(symbols, queue.sync_q)
         while True:
             market = await queue.async_q.get()

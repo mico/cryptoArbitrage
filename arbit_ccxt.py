@@ -24,7 +24,7 @@ import datetime
 import functools
 import copy
 
-exchange_ids = ['poloniex', 'hitbtc2', 'bitfinex', 'binance']
+exchange_ids = ['poloniex', 'hitbtc2', 'bitfinex', 'binance', 'bittrex']
 exchanges = {}
 coins = {}
 cheapest_ask = {}
