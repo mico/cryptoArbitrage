@@ -237,7 +237,7 @@ async def send_update(pair, room=None):
             'spreadLastPrice': "",
             'spreadLastPriceMaxExchange': [0, 0],
             'spreadLastPriceMinExchange': [0, 0],
-            'lastUpdated': time()
+            'lastUpdated': [time(), 'poloniex']
         }
     elif pair is not None:
         spreads_by_pairs[pair] = {
@@ -246,7 +246,7 @@ async def send_update(pair, room=None):
             'spreadLastPrice': "%.2f" % float(arbitrage_stats[pair]['arbitrage']['spread_percent']),
             'spreadLastPriceMaxExchange': ["%.8f" % arbitrage_stats[pair]['arbitrage']['highestBidPrice'], arbitrage_stats[pair]['arbitrage']['highestBidExchange']],
             'spreadLastPriceMinExchange': ["%.8f" % arbitrage_stats[pair]['arbitrage']['lowestAskPrice'], arbitrage_stats[pair]['arbitrage']['lowestAskExchange']],
-            'lastUpdated': int(arbitrage_stats[pair]['updated']),
+            'lastUpdated': arbitrage_stats[pair]['updated'],
             'timeFound': int(arbitrage_stats[pair]['time_found']),
         }
 
@@ -329,7 +329,7 @@ def is_exchanges_updated(exchanges):
 
 async def arbitrage_liquidate(stats, pair):
     global arbitrage_history, arbitrage_stats
-    logger.debug("was alive %.1f seconds" % (time() - stats['updated']))
+    logger.debug("was alive %.1f seconds" % (time() - stats['updated'][0]))
     # TODO: save arbitrage history (influxdb) before drop
     stats['finished'] = time()
     stats['pair'] = pair
@@ -404,15 +404,19 @@ async def calculate_arbitrage2(pair):
                 }
                 updated_time = min(exchange_pair_updated[pair][lowestAskPair[pair][1]],
                                    exchange_pair_updated[pair][highestBidPair[pair][1]])
+                if exchange_pair_updated[pair][lowestAskPair[pair][1]] > exchange_pair_updated[pair][highestBidPair[pair][1]]:
+                    updated_time_exchange = highestBidPair[pair][1]
+                else:
+                    updated_time_exchange = lowestAskPair[pair][1]
                 if pair not in arbitrage_stats or arbitrage_stats[pair]['arbitrage'] != last_arbitrage:
                     # if 'bitfinex' in [lowestAskPair[pair][1], highestBidPair[pair][1]]:
                     if spread_percent > 1:
                         if pair not in arbitrage_stats or any_exchange_changed(last_arbitrage, arbitrage_stats[pair]['arbitrage']):
                             logger.debug("found new arbitrage: ")
-                            arbitrage_new(pair, last_arbitrage, updated_time)
+                            arbitrage_new(pair, last_arbitrage, [int(updated_time), updated_time_exchange])
 
                         elif arbitrage_stats[pair]['arbitrage'] != last_arbitrage:
-                            arbitrage_update(pair, last_arbitrage, updated_time)
+                            arbitrage_update(pair, last_arbitrage, [int(updated_time), updated_time_exchange])
 
                         # log arbitrage found or updated
                         logger.debug("pair %s spread %.8f (%.3f%%) exchanges: %s/%s" % (pair,
