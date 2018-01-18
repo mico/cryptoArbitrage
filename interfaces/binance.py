@@ -105,9 +105,16 @@ class binance(ccxt.binance):
                 logger.error(err)
                 logger.error(traceback.print_exc())
 
+    async def do_load_markets(self):
+        try:
+            await self.load_markets()
+        except errors.RequestTimeout:
+            await self.do_load_markets()
+
     async def websocket_run(self, symbols):
         global orderbooks
-        await self.load_markets()
+        await self.do_load_markets()
+
         loop = asyncio.get_event_loop()
         self.queue = janus.Queue(loop=loop)
 

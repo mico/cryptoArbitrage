@@ -3,6 +3,7 @@ import websockets
 import ccxt.async as ccxt
 import logging
 import traceback
+from ccxt.base import errors
 
 logger = logging.getLogger('arbit')
 
@@ -13,9 +14,15 @@ channel_ids = {}
 class bitfinex(ccxt.bitfinex):
     global logger
 
+    async def do_load_markets(self):
+        try:
+            await self.load_markets()
+        except errors.RequestTimeout:
+            await self.do_load_markets()
+
     async def websocket_run(self, symbols):
         global orderbooks, channel_ids
-        await self.load_markets()
+        await self.do_load_markets()
         ws_client = websockets.connect('wss://api.bitfinex.com/ws/2')
         async with ws_client as websocket:
             for symbol in symbols:

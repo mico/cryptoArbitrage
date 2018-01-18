@@ -18,6 +18,7 @@ orderbooks = {}
 connection_open = True
 last_nounce = {}
 snapshot_nounce = {}
+market_counter = {}
 
 # TODO: check Nounce and put on queue
 
@@ -32,6 +33,8 @@ class bittrex(ccxt.bittrex):
         # save snapshot kwargs['R']['Nounce']
         if 'R' in kwargs and type(kwargs['R']) is not bool:
             market = market_connection_ids[int(kwargs['I'])]
+            if market in snapshot_nounce:
+                print("snapshot already got before")
             snapshot_nounce[market] = kwargs['R']['Nounce']
             orderbooks[market] = {
                 'bids': dict([[row['Rate'], row['Quantity']] for row in kwargs['R']['Buys']]),
@@ -39,6 +42,7 @@ class bittrex(ccxt.bittrex):
             }
             self.queue.put(market)
     def parse_message(self, message):
+        global last_nounce
         market = self.markets_by_id[message['MarketName']]['symbol']
         if market in orderbooks:
             for row in message['Buys']:
@@ -62,39 +66,59 @@ class bittrex(ccxt.bittrex):
             self.queue.put(market)
 
     def signalr_message(self, *args, **kwargs):
-        global last_nounce, logger
+        global last_nounce, snapshot_nounce, logger
         try:
             if len(args) > 1:
                 raise Exception("args more then 1")
 
             market = self.markets_by_id[args[0]['MarketName']]['symbol']
-
+            if market not in market_counter:
+                market_counter[market] = 1
+            else:
+                market_counter[market] += 1
             #print(args[0]['Nounce'])
             if market not in snapshot_nounce:
                 # TODO: put to queue
                 self.pre_queue.append(args[0])
                 return
             if len(self.pre_queue) > 0:
-                for q in self.pre_queue:
+                # filter queue by current market
+                queue = list(filter(lambda x: self.markets_by_id[x['MarketName']]['symbol'] == market, self.pre_queue))
+                for q in queue:
                     if self.markets_by_id[q['MarketName']]['symbol'] == market:
                         # print("q nounce: %s, snapshot nounce: %s" % (q['Nounce'], snapshot_nounce[market]))
                         if q['Nounce'] == snapshot_nounce[market]:
                             # print("found snapshot nounce for %s" % market)
                             pass
-                        elif q['Nounce'] == (snapshot_nounce[market] + 1):
-                            # print("found snapshot nounce + 1 for %s" % market)
-                            self.parse_message(q)
-                        self.pre_queue.remove(q)
+                            self.pre_queue.remove(q)
+                            queue.remove(q)
+                        else:
+                            if q['Nounce'] == (snapshot_nounce[market] + 1):
+                                # print("found snapshot nounce + 1 for %s" % market)
+                                self.parse_message(q)
+                                # then parse remaining messages in queue
+                                self.pre_queue.remove(q)
+                                queue.remove(q)
+                                if len(queue) > 0:
+                                    for f in queue.sort(key=lambda x: x['Nounce']):
+                                        if f['Nounce'] > (snapshot_nounce[market] + 1):
+                                            self.parse_message(f)
+                                        self.pre_queue.remove(f)
+                                    break
 
             if market in last_nounce:
                 if args[0]['Nounce'] < last_nounce[market]:
-                    # print("old Nounce skip")
+                    print("%s old Nounce skip" % market)
                     return
                 elif args[0]['Nounce'] == last_nounce[market]:
                     # print("nounce the same, skip!!!")
                     return
                 elif args[0]['Nounce'] == (last_nounce[market] + 1):
                     self.parse_message(args[0])
+                elif args[0]['Nounce'] > (last_nounce[market] + 1):
+                    print("sequence too fresh, resync")
+                    self.queue.put("closed")
+                    # resync!!!
             elif args[0]['Nounce'] == (snapshot_nounce[market] + 1):
                 self.parse_message(args[0])
             # else:
@@ -142,6 +166,7 @@ class bittrex(ccxt.bittrex):
         while True:
             market = await queue.async_q.get()
             if market == "closed":
+                logger.error("bittrex restart")
                 break
 
             yield ['bittrex', {'asks': list(sorted(orderbooks[market]['asks'].items())),

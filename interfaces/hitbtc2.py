@@ -4,6 +4,7 @@ import ccxt.async as ccxt
 from time import time
 import logging
 import traceback
+from ccxt.base import errors
 
 logger = logging.getLogger('arbit')
 
@@ -13,9 +14,15 @@ orderbooks = {}
 class hitbtc2(ccxt.hitbtc2):
     global logger
 
+    async def do_load_markets(self):
+        try:
+            await self.load_markets()
+        except errors.RequestTimeout:
+            await self.do_load_markets()
+
     async def websocket_run(self, symbols):
         global orderbooks
-        await self.load_markets()
+        await self.do_load_markets()
         ws_client = websockets.connect('wss://api.hitbtc.com/api/2/ws')
         async with ws_client as websocket:
             for symbol in symbols:
@@ -53,6 +60,10 @@ class hitbtc2(ccxt.hitbtc2):
                                        pair]
                 # except websockets.exceptions.ConnectionClosed as err:
                 #     logger.error("connection closed: %s" % err)
+                except websockets.exceptions.ConnectionClosed as err:
+                    logger.error("hitbtc2 connection closed, restart")
+                    orderbooks = {}
+                    break
                 except Exception as err:
                     logger.error(err)
                     logger.error(traceback.print_exc())
