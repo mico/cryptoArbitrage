@@ -1,0 +1,8 @@
+@startuml
+[*] --> FindPairs
+FindPairs : Collect tickers from exchanges
+FindPairs --> ConnectToExchanges
+ConnectToExchanges : Connect to exchanges websockets and subscribe\nto tickers have more than one exchange
+ConnectToExchanges --> RunServer
+RunServer : Accepting connections from websocket,\npush found arbitrage data and statistics\nto clients
+@enduml

@@ -2,3 +2,6 @@
 	path = externals/signalr-client-py
 	url = git@github.com:mico/signalr-client-py.git
 	branch = asyncio
+[submodule "externals/python-bittrex-websocket"]
+	path = externals/python-bittrex-websocket
+	url = git@github.com:slazarov/python-bittrex-websocket.git
